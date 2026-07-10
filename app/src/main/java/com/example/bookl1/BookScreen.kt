@@ -13,6 +13,7 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
@@ -24,6 +25,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.abs
 
@@ -32,13 +34,12 @@ import kotlin.math.abs
 fun BookScreen(viewModel: PdfViewModel) {
     val pagerState = rememberPagerState(pageCount = { viewModel.pageCount })
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
-    // Zoom Memory
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
     var offsetY by remember { mutableFloatStateOf(0f) }
 
-    // Always reset the page to normal when a new page is turned
     LaunchedEffect(pagerState.currentPage) {
         scale = 1f
         offsetX = 0f
@@ -78,14 +79,23 @@ fun BookScreen(viewModel: PdfViewModel) {
             )
         },
         bottomBar = {
-            BottomAppBar(
-                containerColor = Color(0xFF3E2723)
-            ) {
-                if (viewModel.pageCount > 0) {
+            Surface(color = Color(0xFF3E2723), tonalElevation = 8.dp) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Slider(
+                        value = pagerState.currentPage.toFloat(),
+                        onValueChange = {
+                            scope.launch { pagerState.scrollToPage(it.toInt()) }
+                        },
+                        valueRange = 0f..(if (viewModel.pageCount > 0) (viewModel.pageCount - 1).toFloat() else 0f),
+                        colors = SliderDefaults.colors(
+                            thumbColor = Color(0xFFFFD700),
+                            activeTrackColor = Color(0xFFFFD700)
+                        )
+                    )
                     Text(
                         text = "Page ${pagerState.currentPage + 1} of ${viewModel.pageCount}",
                         color = Color(0xFFFFD700),
-                        modifier = Modifier.padding(horizontal = 16.dp)
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
                     )
                 }
             }
@@ -97,7 +107,6 @@ fun BookScreen(viewModel: PdfViewModel) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues),
-            // Safety Lock: Only allow the pager to swipe if the scale is normal
             userScrollEnabled = scale <= 1.01f
         ) { page ->
 
@@ -109,7 +118,6 @@ fun BookScreen(viewModel: PdfViewModel) {
 
             pageBitmap?.let { bitmap ->
 
-                // OUTER LAYER: The 3D Book Hinge
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -124,70 +132,70 @@ fun BookScreen(viewModel: PdfViewModel) {
                         }
                 ) {
 
-                    // INNER LAYER: The Custom Pointer Interceptor
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .pointerInput(Unit) {
-                                awaitEachGesture {
-                                    awaitFirstDown()
-                                    do {
-                                        val event = awaitPointerEvent()
-                                        val zoom = event.calculateZoom()
-                                        val pan = event.calculatePan()
+                    // THE FIX: Get constraints outside, apply gestures inside!
+                    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                        val screenWidth = constraints.maxWidth.toFloat()
+                        val screenHeight = constraints.maxHeight.toFloat()
 
-                                        // RULE 1: If 2 or more fingers are touching, it's a PINCH.
-                                        if (event.changes.size >= 2) {
-                                            scale = (scale * zoom).coerceIn(1f, 3f)
-                                            offsetX += pan.x
-                                            offsetY += pan.y
-                                            // Tell Android: "I used this touch, don't pass it to the Pager"
-                                            event.changes.forEach { it.consume() }
-                                        }
-                                        // RULE 2: If 1 finger is touching AND we are zoomed in, it's a DRAG.
-                                        else if (scale > 1.01f) {
-                                            offsetX += pan.x
-                                            offsetY += pan.y
-                                            // Tell Android: "I used this touch, don't pass it to the Pager"
-                                            event.changes.forEach { it.consume() }
-                                        }
-                                        // RULE 3: If 1 finger and NOT zoomed in... DO NOTHING!
-                                        // The touch passes right through the cracks to the HorizontalPager to flip the page.
-
-                                    } while (event.changes.any { it.pressed })
-
-                                    // When they let go, snap back to exactly 1.0 if they pinched out far enough
-                                    if (scale <= 1.05f) {
-                                        scale = 1f
-                                        offsetX = 0f
-                                        offsetY = 0f
-                                    }
-                                }
-                            }
-                            .graphicsLayer {
-                                scaleX = scale
-                                scaleY = scale
-                                translationX = offsetX
-                                translationY = offsetY
-                            }
-                    ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.old_paper),
-                            contentDescription = "Old Paper",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "Page $page",
-                            contentScale = ContentScale.Fit,
+                        Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .graphicsLayer {
-                                    blendMode = BlendMode.Multiply
+                                .pointerInput(Unit) {
+                                    awaitEachGesture {
+                                        awaitFirstDown()
+                                        do {
+                                            val event = awaitPointerEvent()
+                                            val zoom = event.calculateZoom()
+                                            val pan = event.calculatePan()
+
+                                            if (event.changes.size >= 2) {
+                                                scale = (scale * zoom).coerceIn(1f, 3f)
+                                                val maxX = (screenWidth * (scale - 1)) / 2f
+                                                val maxY = (screenHeight * (scale - 1)) / 2f
+                                                offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
+                                                offsetY = (offsetY + pan.y).coerceIn(-maxY, maxY)
+                                            }
+                                            else if (scale > 1.01f) {
+                                                val maxX = (screenWidth * (scale - 1)) / 2f
+                                                val maxY = (screenHeight * (scale - 1)) / 2f
+                                                offsetX = (offsetX + pan.x).coerceIn(-maxX, maxX)
+                                                offsetY = (offsetY + pan.y).coerceIn(-maxY, maxY)
+                                            }
+
+                                        } while (event.changes.any { it.pressed })
+
+                                        if (scale <= 1.05f) {
+                                            scale = 1f
+                                            offsetX = 0f
+                                            offsetY = 0f
+                                        }
+                                    }
                                 }
-                        )
+                                .graphicsLayer {
+                                    scaleX = scale
+                                    scaleY = scale
+                                    translationX = offsetX
+                                    translationY = offsetY
+                                }
+                        ) {
+                            Image(
+                                painter = painterResource(id = R.drawable.old_paper),
+                                contentDescription = "Old Paper",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Page $page",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .graphicsLayer {
+                                        blendMode = BlendMode.Multiply
+                                    }
+                            )
+                        }
                     }
                 }
             }
