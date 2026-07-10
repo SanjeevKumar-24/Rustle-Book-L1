@@ -4,6 +4,10 @@ import android.graphics.Bitmap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -15,6 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -28,8 +33,18 @@ fun BookScreen(viewModel: PdfViewModel) {
     val pagerState = rememberPagerState(pageCount = { viewModel.pageCount })
     val context = LocalContext.current
 
-    // 1. THIS IS THE MAGIC FILE PICKER!
-    // When a user picks a PDF, this copies it to the app and tells the ViewModel to open it.
+    // Zoom Memory
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var offsetY by remember { mutableFloatStateOf(0f) }
+
+    // Always reset the page to normal when a new page is turned
+    LaunchedEffect(pagerState.currentPage) {
+        scale = 1f
+        offsetX = 0f
+        offsetY = 0f
+    }
+
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -44,7 +59,6 @@ fun BookScreen(viewModel: PdfViewModel) {
         }
     }
 
-    // The Scaffold is our wooden frame!
     Scaffold(
         topBar = {
             TopAppBar(
@@ -52,14 +66,11 @@ fun BookScreen(viewModel: PdfViewModel) {
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color(0xFF3E2723)
                 ),
-                // 2. THIS IS THE NEW BUTTON!
                 actions = {
                     Button(
-                        onClick = {
-                            // Tell the file picker to only look for PDFs
-                            filePickerLauncher.launch(arrayOf("application/pdf"))
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5D4037))
+                        onClick = { filePickerLauncher.launch(arrayOf("application/pdf")) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF5D4037)),
+                        modifier = Modifier.padding(end = 8.dp)
                     ) {
                         Text("Open Book", color = Color(0xFFFFD700))
                     }
@@ -70,7 +81,6 @@ fun BookScreen(viewModel: PdfViewModel) {
             BottomAppBar(
                 containerColor = Color(0xFF3E2723)
             ) {
-                // Hide page count if there are 0 pages
                 if (viewModel.pageCount > 0) {
                     Text(
                         text = "Page ${pagerState.currentPage + 1} of ${viewModel.pageCount}",
@@ -86,7 +96,9 @@ fun BookScreen(viewModel: PdfViewModel) {
             state = pagerState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(paddingValues)
+                .padding(paddingValues),
+            // Safety Lock: Only allow the pager to swipe if the scale is normal
+            userScrollEnabled = scale <= 1.01f
         ) { page ->
 
             var pageBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -96,6 +108,8 @@ fun BookScreen(viewModel: PdfViewModel) {
             }
 
             pageBitmap?.let { bitmap ->
+
+                // OUTER LAYER: The 3D Book Hinge
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -109,23 +123,72 @@ fun BookScreen(viewModel: PdfViewModel) {
                             alpha = 1f - abs(pageOffset).coerceIn(0f, 1f) * 0.5f
                         }
                 ) {
-                    Image(
-                        painter = painterResource(id = R.drawable.old_paper),
-                        contentDescription = "Old Paper",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
 
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "Page $page",
-                        contentScale = ContentScale.Fit,
+                    // INNER LAYER: The Custom Pointer Interceptor
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .graphicsLayer {
-                                blendMode = BlendMode.Multiply
+                            .pointerInput(Unit) {
+                                awaitEachGesture {
+                                    awaitFirstDown()
+                                    do {
+                                        val event = awaitPointerEvent()
+                                        val zoom = event.calculateZoom()
+                                        val pan = event.calculatePan()
+
+                                        // RULE 1: If 2 or more fingers are touching, it's a PINCH.
+                                        if (event.changes.size >= 2) {
+                                            scale = (scale * zoom).coerceIn(1f, 3f)
+                                            offsetX += pan.x
+                                            offsetY += pan.y
+                                            // Tell Android: "I used this touch, don't pass it to the Pager"
+                                            event.changes.forEach { it.consume() }
+                                        }
+                                        // RULE 2: If 1 finger is touching AND we are zoomed in, it's a DRAG.
+                                        else if (scale > 1.01f) {
+                                            offsetX += pan.x
+                                            offsetY += pan.y
+                                            // Tell Android: "I used this touch, don't pass it to the Pager"
+                                            event.changes.forEach { it.consume() }
+                                        }
+                                        // RULE 3: If 1 finger and NOT zoomed in... DO NOTHING!
+                                        // The touch passes right through the cracks to the HorizontalPager to flip the page.
+
+                                    } while (event.changes.any { it.pressed })
+
+                                    // When they let go, snap back to exactly 1.0 if they pinched out far enough
+                                    if (scale <= 1.05f) {
+                                        scale = 1f
+                                        offsetX = 0f
+                                        offsetY = 0f
+                                    }
+                                }
                             }
-                    )
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                                translationX = offsetX
+                                translationY = offsetY
+                            }
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.old_paper),
+                            contentDescription = "Old Paper",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "Page $page",
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    blendMode = BlendMode.Multiply
+                                }
+                        )
+                    }
                 }
             }
         }
