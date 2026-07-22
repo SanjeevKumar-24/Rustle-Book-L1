@@ -9,7 +9,12 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,6 +25,9 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
@@ -44,6 +52,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -53,6 +62,7 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.launch
 import java.io.*
+import kotlin.math.roundToInt
 
 // --- 1. DATA MODELS & PERSISTENCE ---
 enum class Tool { NONE, PEN, HIGHLIGHT, ERASER, NOTE, SCANNER }
@@ -90,9 +100,9 @@ fun loadAnnotations(context: Context): SavedData? {
     } catch (e: Exception) { null }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
-fun BookScreen(viewModel: PdfViewModel) {
+fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     val pagerState = rememberPagerState(pageCount = { viewModel.pageCount })
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -105,6 +115,14 @@ fun BookScreen(viewModel: PdfViewModel) {
     // --- UI AND TOOL STATES ---
     var currentTool by remember { mutableStateOf(Tool.NONE) }
     var isToolbarVisible by remember { mutableStateOf(true) }
+
+    // --- HORIZONTAL DRAGGABLE TOOLBOX OFFSETS ---
+    var toolboxOffsetX by remember { mutableFloatStateOf(0f) }
+    var toolboxOffsetY by remember { mutableFloatStateOf(0f) }
+
+    // --- OVERLAY STATES ---
+    var showPageOverview by remember { mutableStateOf(false) }
+    var showBookmarksList by remember { mutableStateOf(false) }
 
     val strokesMap = remember { mutableStateMapOf<Int, MutableList<DrawStroke>>() }
     val notesMap = remember { mutableStateMapOf<Int, MutableList<StickyNoteData>>() }
@@ -138,106 +156,12 @@ fun BookScreen(viewModel: PdfViewModel) {
         } else isFirstLoad = false
     }
 
-    Scaffold(
-        topBar = {
-            Column(modifier = Modifier.background(Color(0xFF2C2C2C))) {
-                Spacer(modifier = Modifier.statusBarsPadding())
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1E1E1E))) {
 
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                        Text(text = "⬅️", fontSize = 20.sp, modifier = Modifier.clickable { (context as? Activity)?.finish() })
-                        Text(text = "🔲", fontSize = 20.sp, modifier = Modifier.clickable { })
-                    }
-                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                        Text(text = "🔍", fontSize = 20.sp, modifier = Modifier.clickable { })
-                        Text(text = "⚙️", fontSize = 20.sp, modifier = Modifier.clickable { })
-                        Text(text = "☰", fontSize = 20.sp, modifier = Modifier.clickable { isToolbarVisible = !isToolbarVisible })
-                    }
-                }
-
-                AnimatedVisibility(visible = isToolbarVisible) {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(50))
-                                .background(Color(0xFF424242))
-                                .padding(horizontal = 12.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val tools = listOf(Tool.NONE to "✋", Tool.PEN to "🖊️", Tool.HIGHLIGHT to "🖍️", Tool.ERASER to "🧽", Tool.NOTE to "📝", Tool.SCANNER to "⭕")
-
-                            tools.forEach { (t, emoji) ->
-                                Box(
-                                    modifier = Modifier
-                                        .size(36.dp)
-                                        .background(if (currentTool == t) Color(0xFF6200EE) else Color.Transparent, CircleShape)
-                                        .clickable {
-                                            currentTool = t
-                                            scannerPoints = emptyList()
-                                        },
-                                    contentAlignment = Alignment.Center
-                                ) { Text(text = emoji, fontSize = 20.sp) }
-                            }
-
-                            Box(modifier = Modifier.height(20.dp).width(1.dp).background(Color.Gray))
-
-                            val isBookmarked = bookmarks.contains(pagerState.currentPage)
-                            Box(
-                                modifier = Modifier.size(36.dp).clickable {
-                                    if (isBookmarked) bookmarks.remove(pagerState.currentPage) else bookmarks.add(pagerState.currentPage)
-                                    saveAnnotations(context, strokesMap, notesMap, bookmarks)
-                                },
-                                contentAlignment = Alignment.Center
-                            ) { Text(text = if (isBookmarked) "🔖" else "📑", fontSize = 20.sp) }
-                        }
-                    }
-                }
-            }
-        },
-        bottomBar = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFF2C2C2C))
-                    .navigationBarsPadding()
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Text(
-                        text = "${pagerState.currentPage + 1} / ${if (viewModel.pageCount > 0) viewModel.pageCount else 0}",
-                        color = Color(0xFFE0E0E0),
-                        fontSize = 14.sp
-                    )
-
-                    Slider(
-                        value = pagerState.currentPage.toFloat(),
-                        onValueChange = { scope.launch { pagerState.scrollToPage(it.toInt()) } },
-                        valueRange = 0f..(if (viewModel.pageCount > 0) (viewModel.pageCount - 1).toFloat() else 0f),
-                        colors = SliderDefaults.colors(thumbColor = Color(0xFFE0E0E0), activeTrackColor = Color(0xFFE0E0E0)),
-                        modifier = Modifier.weight(1f).height(24.dp)
-                    )
-                }
-            }
-        }
-    ) { paddingValues ->
-
+        // --- 1. THE PDF VIEWER ---
         HorizontalPager(
             state = pagerState,
-            modifier = Modifier.fillMaxSize().padding(paddingValues),
+            modifier = Modifier.fillMaxSize(),
             userScrollEnabled = scale <= 1.01f && currentTool == Tool.NONE
         ) { page ->
 
@@ -266,9 +190,6 @@ fun BookScreen(viewModel: PdfViewModel) {
                         val screenHeight = constraints.maxHeight.toFloat()
                         var currentLiveStroke by remember { mutableStateOf<List<Offset>>(emptyList()) }
 
-                        // --- THE FIX: Un-scaling Math ---
-                        // This dynamically calculates exactly where the ink belongs on the true PDF
-                        // regardless of how far you are zoomed in or panned away.
                         val unscaleOffset = { screenOffset: Offset ->
                             val pivotX = screenWidth / 2f
                             val pivotY = screenHeight / 2f
@@ -283,7 +204,6 @@ fun BookScreen(viewModel: PdfViewModel) {
                                 stroke.points.none { p ->
                                     val dx = p.x - trueTouchPoint.x
                                     val dy = p.y - trueTouchPoint.y
-                                    // Scale the eraser radius dynamically so it works while zoomed
                                     (dx * dx + dy * dy) < (2500f / (scale * scale))
                                 }
                             }
@@ -493,6 +413,240 @@ fun BookScreen(viewModel: PdfViewModel) {
 
                             if (bookmarks.contains(page)) {
                                 Text("🔖", fontSize = 45.sp, modifier = Modifier.align(Alignment.TopEnd).padding(16.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- 2. TOP NAVIGATION BAR ---
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.TopCenter)
+        ) {
+            Column(modifier = Modifier.background(Color(0xFF2C2C2C))) {
+                Spacer(modifier = Modifier.statusBarsPadding())
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                        Text(text = "⬅️", fontSize = 20.sp, modifier = Modifier.clickable { onBackClicked() })
+                        Text(text = "🔲", fontSize = 20.sp, modifier = Modifier.clickable { showPageOverview = true })
+                        Text(text = "📑", fontSize = 20.sp, modifier = Modifier.clickable { showBookmarksList = true })
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                        Text(text = "🔍", fontSize = 20.sp, modifier = Modifier.clickable { })
+                        Text(text = "⚙️", fontSize = 20.sp, modifier = Modifier.clickable { })
+                        Text(text = "☰", fontSize = 20.sp, modifier = Modifier.clickable { isToolbarVisible = !isToolbarVisible })
+                    }
+                }
+            }
+        }
+
+        // --- 3. THE HORIZONTAL DRAGGABLE TOOLBOX ---
+        AnimatedVisibility(
+            visible = isToolbarVisible,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .padding(top = 70.dp), // Placed safely below the top navigation bar
+            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Row(
+                    modifier = Modifier
+                        .offset { IntOffset(toolboxOffsetX.roundToInt(), toolboxOffsetY.roundToInt()) }
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0xFF424242))
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                toolboxOffsetX += dragAmount.x
+                                toolboxOffsetY += dragAmount.y // Allows free movement across the screen
+                            }
+                        }
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val tools = listOf(Tool.NONE to "✋", Tool.PEN to "🖊️", Tool.HIGHLIGHT to "🖍️", Tool.ERASER to "🧽", Tool.NOTE to "📝", Tool.SCANNER to "⭕")
+
+                    tools.forEach { (t, emoji) ->
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(if (currentTool == t) Color(0xFF6200EE) else Color.Transparent, CircleShape)
+                                .clickable {
+                                    currentTool = t
+                                    scannerPoints = emptyList()
+                                },
+                            contentAlignment = Alignment.Center
+                        ) { Text(text = emoji, fontSize = 20.sp) }
+                    }
+
+                    Box(modifier = Modifier.height(20.dp).width(1.dp).background(Color.Gray))
+
+                    val isBookmarked = bookmarks.contains(pagerState.currentPage)
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clickable {
+                                if (isBookmarked) bookmarks.remove(pagerState.currentPage) else bookmarks.add(pagerState.currentPage)
+                                saveAnnotations(context, strokesMap, notesMap, bookmarks)
+                            },
+                        contentAlignment = Alignment.Center
+                    ) { Text(text = if (isBookmarked) "🔖" else "➕", fontSize = 20.sp) }
+                }
+            }
+        }
+
+        // --- 4. BOTTOM SLIDER OVERLAY ---
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .align(Alignment.BottomCenter)
+                .background(Color(0xFF2C2C2C))
+                .navigationBarsPadding()
+                .padding(horizontal = 16.dp, vertical = 6.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "${pagerState.currentPage + 1} / ${if (viewModel.pageCount > 0) viewModel.pageCount else 0}",
+                    color = Color(0xFFE0E0E0),
+                    fontSize = 14.sp
+                )
+
+                Slider(
+                    value = pagerState.currentPage.toFloat(),
+                    onValueChange = { scope.launch { pagerState.scrollToPage(it.toInt()) } },
+                    valueRange = 0f..(if (viewModel.pageCount > 0) (viewModel.pageCount - 1).toFloat() else 0f),
+                    colors = SliderDefaults.colors(thumbColor = Color(0xFFE0E0E0), activeTrackColor = Color(0xFFE0E0E0)),
+                    modifier = Modifier.weight(1f).height(24.dp)
+                )
+            }
+        }
+
+        // --- 5. PAGE OVERVIEW DIALOG (Grid View) ---
+        if (showPageOverview) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFA121212))
+                    .zIndex(100f)
+                    .clickable(enabled = false) {}
+            ) {
+                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp).statusBarsPadding()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Page Overview", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text("❌", fontSize = 22.sp, modifier = Modifier.clickable { showPageOverview = false })
+                    }
+
+                    LazyVerticalGrid(
+                        columns = GridCells.Fixed(2),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxSize().padding(bottom = 16.dp)
+                    ) {
+                        items(viewModel.pageCount) { pageIndex ->
+                            Box(
+                                modifier = Modifier
+                                    .aspectRatio(0.7f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.DarkGray)
+                                    .clickable {
+                                        scope.launch { pagerState.scrollToPage(pageIndex) }
+                                        showPageOverview = false
+                                    },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                var thumbBitmap by remember { mutableStateOf<Bitmap?>(null) }
+                                LaunchedEffect(pageIndex) { thumbBitmap = viewModel.getPageImage(pageIndex) }
+
+                                if (thumbBitmap != null) {
+                                    Image(bitmap = thumbBitmap!!.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                }
+                                Box(modifier = Modifier.align(Alignment.BottomEnd).background(Color(0xAA000000), RoundedCornerShape(topStart = 8.dp)).padding(8.dp)) {
+                                    Text("Pg ${pageIndex + 1}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                }
+
+                                if (bookmarks.contains(pageIndex)) {
+                                    Text("🔖", fontSize = 24.sp, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- 6. BOOKMARKS TELEPORT DIALOG ---
+        if (showBookmarksList) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFA121212))
+                    .zIndex(100f)
+                    .clickable(enabled = false) {}
+            ) {
+                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp).statusBarsPadding()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Teleport to Bookmark", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text("❌", fontSize = 22.sp, modifier = Modifier.clickable { showBookmarksList = false })
+                    }
+
+                    if (bookmarks.isEmpty()) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("No bookmarks added yet.", color = Color.Gray, fontSize = 16.sp)
+                        }
+                    } else {
+                        LazyVerticalGrid(
+                            columns = GridCells.Fixed(2),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            modifier = Modifier.fillMaxSize().padding(bottom = 16.dp)
+                        ) {
+                            items(bookmarks.sorted()) { bookmarkedPage ->
+                                Box(
+                                    modifier = Modifier
+                                        .aspectRatio(0.7f)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.DarkGray)
+                                        .clickable {
+                                            scope.launch { pagerState.scrollToPage(bookmarkedPage) }
+                                            showBookmarksList = false
+                                        },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    var thumbBitmap by remember { mutableStateOf<Bitmap?>(null) }
+                                    LaunchedEffect(bookmarkedPage) { thumbBitmap = viewModel.getPageImage(bookmarkedPage) }
+
+                                    if (thumbBitmap != null) {
+                                        Image(bitmap = thumbBitmap!!.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                                    }
+
+                                    Box(modifier = Modifier.align(Alignment.BottomEnd).background(Color(0xAA000000), RoundedCornerShape(topStart = 8.dp)).padding(8.dp)) {
+                                        Text("Pg ${bookmarkedPage + 1}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Text("🔖", fontSize = 28.sp, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
+                                }
                             }
                         }
                     }

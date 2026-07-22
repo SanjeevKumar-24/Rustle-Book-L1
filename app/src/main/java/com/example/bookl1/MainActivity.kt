@@ -18,10 +18,10 @@ import java.io.FileOutputStream
 
 class MainActivity : ComponentActivity() {
 
+    // This is your main ViewModel. It holds the PDF data.
     private val viewModel: PdfViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // CRITICAL: This tells Android to actually build the Activity
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
@@ -33,27 +33,45 @@ class MainActivity : ComponentActivity() {
             viewModel.openBook(samplePdf)
         }
 
-        // 3. Launch the screen
         setContent {
-            // Your theme block might be named differently (e.g., BookL1Theme)
             MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // 1. Create a state to track if the splash is showing
-                    var showSplash by remember { mutableStateOf(true) }
+                    // Track exactly which screen the user is currently looking at
+                    var currentScreen by remember { mutableStateOf("SPLASH") }
 
-                    // 2. The Navigation Logic
-                    if (showSplash) {
-                        VideoSplashScreen(
-                            onSplashFinished = {
-                                showSplash = false // Hide splash, show book
-                            }
-                        )
-                    } else {
-                        // Load your amazing book engine!
-                        BookScreen(viewModel)
+                    // Navigation Logic
+                    when (currentScreen) {
+                        "SPLASH" -> {
+                            VideoSplashScreen(
+                                onSplashFinished = {
+                                    // When the video ends, go to the Library
+                                    currentScreen = "LIBRARY"
+                                }
+                            )
+                        }
+                        "LIBRARY" -> {
+                            LibraryScreen(
+                                onBookSelected = { selectedFile ->
+                                    // Tell the PDF engine to load the exact file you tapped on!
+                                    viewModel.openBook(selectedFile)
+                                    // Switch over to the Book Reader screen
+                                    currentScreen = "BOOK"
+                                }
+                            )
+                        }
+                        "BOOK" -> {
+                            // Pass the class-level viewModel that has the actual PDF loaded inside it!
+                            BookScreen(
+                                viewModel = viewModel,
+                                onBackClicked = {
+                                    // When the ⬅️ button is tapped, go back to the Library
+                                    currentScreen = "LIBRARY"
+                                }
+                            )
+                        }
                     }
                 }
             }
