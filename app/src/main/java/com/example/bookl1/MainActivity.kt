@@ -5,9 +5,16 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import java.io.File
 import java.io.FileOutputStream
-
 
 class MainActivity : ComponentActivity() {
 
@@ -28,7 +35,28 @@ class MainActivity : ComponentActivity() {
 
         // 3. Launch the screen
         setContent {
-            BookScreen(viewModel = viewModel)
+            // Your theme block might be named differently (e.g., BookL1Theme)
+            MaterialTheme {
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    // 1. Create a state to track if the splash is showing
+                    var showSplash by remember { mutableStateOf(true) }
+
+                    // 2. The Navigation Logic
+                    if (showSplash) {
+                        VideoSplashScreen(
+                            onSplashFinished = {
+                                showSplash = false // Hide splash, show book
+                            }
+                        )
+                    } else {
+                        // Load your amazing book engine!
+                        BookScreen(viewModel)
+                    }
+                }
+            }
         }
     }
 
