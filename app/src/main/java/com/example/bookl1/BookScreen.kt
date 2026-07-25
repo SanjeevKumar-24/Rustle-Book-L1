@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -17,6 +18,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -56,11 +58,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.zIndex
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.*
 import kotlin.math.roundToInt
 
@@ -69,6 +74,19 @@ enum class Tool { NONE, PEN, HIGHLIGHT, ERASER, NOTE, SCANNER }
 data class DrawStroke(val points: List<Offset>, val tool: Tool)
 data class StickyNoteData(val id: String, val position: Offset, var text: String)
 
+// UPDATED: Added "Nordic Blue" (SKY) so there are exactly 8 items (4 rows of 2) - no empty holes!
+enum class PageStyle(val label: String, val color: Color, val drawableRes: Int?) {
+    PAPER("Old Paper", Color.Transparent, R.drawable.old_paper),
+    TEXTURE_1("Cream", Color.Transparent, R.drawable.bg_texture_1),
+    TEXTURE_2("Manuscript", Color.Transparent, R.drawable.bg_texture_2),
+    TEXTURE_3("Parchment", Color.Transparent, R.drawable.bg_texture_3),
+    WHITE("Clean", Color(0xFFFFFFFF), null),
+    SEPIA("Warm", Color(0xFFF4ECD8), null),
+    MINT("Zen Mint", Color(0xFFE8F5E9), null),
+    SKY("Nordic Blue", Color(0xFFE1EBF0), null), // 8th Item! Fills the blank space perfectly.
+    CUSTOM("Custom Gallery", Color.Transparent, null)
+}
+
 data class SavedStroke(val xs: List<Float>, val ys: List<Float>, val tool: String) : Serializable
 data class SavedNote(val id: String, val x: Float, val y: Float, val text: String) : Serializable
 data class SavedData(
@@ -76,6 +94,10 @@ data class SavedData(
     val notes: HashMap<Int, List<SavedNote>>,
     val bookmarks: ArrayList<Int>
 ) : Serializable
+
+object ActiveBook {
+    var fileName: String = "default.pdf"
+}
 
 fun saveAnnotations(context: Context, strokes: Map<Int, List<DrawStroke>>, notes: Map<Int, List<StickyNoteData>>, bookmarks: List<Int>) {
     val sStrokes = HashMap<Int, List<SavedStroke>>()
@@ -88,15 +110,16 @@ fun saveAnnotations(context: Context, strokes: Map<Int, List<DrawStroke>>, notes
     }
     val data = SavedData(sStrokes, sNotes, ArrayList(bookmarks))
     try {
-        ObjectOutputStream(FileOutputStream(File(context.filesDir, "book_memory.dat"))).use { it.writeObject(data) }
+        val memoryFile = File(context.filesDir, "${ActiveBook.fileName}.dat")
+        ObjectOutputStream(FileOutputStream(memoryFile)).use { it.writeObject(data) }
     } catch (e: Exception) { e.printStackTrace() }
 }
 
 fun loadAnnotations(context: Context): SavedData? {
-    val file = File(context.filesDir, "book_memory.dat")
-    if (!file.exists()) return null
+    val memoryFile = File(context.filesDir, "${ActiveBook.fileName}.dat")
+    if (!memoryFile.exists()) return null
     return try {
-        ObjectInputStream(FileInputStream(file)).use { it.readObject() as SavedData }
+        ObjectInputStream(FileInputStream(memoryFile)).use { it.readObject() as SavedData }
     } catch (e: Exception) { null }
 }
 
@@ -116,6 +139,38 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     var currentTool by remember { mutableStateOf(Tool.NONE) }
     var isToolbarVisible by remember { mutableStateOf(true) }
 
+    // --- SETTINGS STATES ---
+    var currentPageStyle by remember { mutableStateOf(PageStyle.TEXTURE_2) }
+    var isRainPlaying by remember { mutableStateOf(false) }
+    var rainVolume by remember { mutableFloatStateOf(0.5f) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
+
+    var customBgUri by remember { mutableStateOf<Uri?>(null) }
+    var customBgBitmap by remember { mutableStateOf<Bitmap?>(null) }
+
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            customBgUri = it
+            currentPageStyle = PageStyle.CUSTOM
+        }
+    }
+
+    LaunchedEffect(customBgUri) {
+        customBgUri?.let { uri ->
+            withContext(Dispatchers.IO) {
+                try {
+                    context.contentResolver.openInputStream(uri)?.use { stream ->
+                        customBgBitmap = BitmapFactory.decodeStream(stream)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
+
     // --- HORIZONTAL DRAGGABLE TOOLBOX OFFSETS ---
     var toolboxOffsetX by remember { mutableFloatStateOf(0f) }
     var toolboxOffsetY by remember { mutableFloatStateOf(0f) }
@@ -124,16 +179,63 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     var showPageOverview by remember { mutableStateOf(false) }
     var showBookmarksList by remember { mutableStateOf(false) }
 
-    val strokesMap = remember { mutableStateMapOf<Int, MutableList<DrawStroke>>() }
-    val notesMap = remember { mutableStateMapOf<Int, MutableList<StickyNoteData>>() }
-    val bookmarks = remember { mutableStateListOf<Int>() }
+    val strokesMap = remember(ActiveBook.fileName) { mutableStateMapOf<Int, MutableList<DrawStroke>>() }
+    val notesMap = remember(ActiveBook.fileName) { mutableStateMapOf<Int, MutableList<StickyNoteData>>() }
+    val bookmarks = remember(ActiveBook.fileName) { mutableStateListOf<Int>() }
 
     // --- SCANNER STATES ---
     var scannerPoints by remember { mutableStateOf<List<Offset>>(emptyList()) }
     var showScannerDialog by remember { mutableStateOf(false) }
     var scannedTextResult by remember { mutableStateOf("Scanning...") }
 
-    LaunchedEffect(Unit) {
+    // --- RAIN AUDIO ENGINE ---
+    val rainPlayer = remember {
+        try {
+            MediaPlayer.create(context, R.raw.rain)?.apply {
+                isLooping = true
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    // Scales rain volume to be 50% softer than page flip sound
+    LaunchedEffect(isRainPlaying, rainVolume) {
+        try {
+            if (isRainPlaying) {
+                val scaledVolume = rainVolume * 0.45f
+                rainPlayer?.setVolume(scaledVolume, scaledVolume)
+                if (rainPlayer?.isPlaying != true) {
+                    rainPlayer?.start()
+                }
+            } else {
+                if (rainPlayer?.isPlaying == true) {
+                    rainPlayer.pause()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                if (rainPlayer?.isPlaying == true) {
+                    rainPlayer.stop()
+                }
+                rainPlayer?.release()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    LaunchedEffect(ActiveBook.fileName) {
+        strokesMap.clear()
+        notesMap.clear()
+        bookmarks.clear()
         loadAnnotations(context)?.let { saved ->
             saved.strokes.forEach { (page, sList) ->
                 strokesMap[page] = sList.map { DrawStroke(it.xs.zip(it.ys) { x, y -> Offset(x, y) }, Tool.valueOf(it.tool)) }.toMutableList()
@@ -328,7 +430,17 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                 }
                                 .graphicsLayer { scaleX = scale; scaleY = scale; translationX = offsetX; translationY = offsetY }
                         ) {
-                            Image(painter = painterResource(id = R.drawable.old_paper), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            val bgBitmap = customBgBitmap
+                            val resId = currentPageStyle.drawableRes
+
+                            if (currentPageStyle == PageStyle.CUSTOM && bgBitmap != null) {
+                                Image(bitmap = bgBitmap.asImageBitmap(), contentDescription = "Custom Background", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            } else if (resId != null) {
+                                Image(painter = painterResource(id = resId), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                            } else {
+                                Box(modifier = Modifier.fillMaxSize().background(currentPageStyle.color))
+                            }
+
                             Image(bitmap = bitmap.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize().graphicsLayer { blendMode = BlendMode.Multiply })
 
                             Canvas(modifier = Modifier.fillMaxSize()) {
@@ -442,7 +554,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                         Text(text = "🔍", fontSize = 20.sp, modifier = Modifier.clickable { })
-                        Text(text = "⚙️", fontSize = 20.sp, modifier = Modifier.clickable { })
+                        Text(text = "⚙️", fontSize = 20.sp, modifier = Modifier.clickable { showSettingsDialog = true })
                         Text(text = "☰", fontSize = 20.sp, modifier = Modifier.clickable { isToolbarVisible = !isToolbarVisible })
                     }
                 }
@@ -453,10 +565,10 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
         AnimatedVisibility(
             visible = isToolbarVisible,
             modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 70.dp), // Placed safely below the top navigation bar
-            enter = slideInVertically(initialOffsetY = { -it }) + fadeIn(),
-            exit = slideOutVertically(targetOffsetY = { -it }) + fadeOut()
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 72.dp),
+            enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
+            exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Row(
@@ -468,7 +580,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                             detectDragGestures { change, dragAmount ->
                                 change.consume()
                                 toolboxOffsetX += dragAmount.x
-                                toolboxOffsetY += dragAmount.y // Allows free movement across the screen
+                                toolboxOffsetY += dragAmount.y
                             }
                         }
                         .padding(horizontal = 12.dp, vertical = 6.dp),
@@ -536,7 +648,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
             }
         }
 
-        // --- 5. PAGE OVERVIEW DIALOG (Grid View) ---
+        // --- 5. PAGE OVERVIEW DIALOG ---
         if (showPageOverview) {
             Box(
                 modifier = Modifier
@@ -646,6 +758,169 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                         Text("Pg ${bookmarkedPage + 1}", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                     }
                                     Text("🔖", fontSize = 28.sp, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- 7. MODERN PRO SETTINGS MODAL DASHBOARD ---
+        if (showSettingsDialog) {
+            Dialog(onDismissRequest = { showSettingsDialog = false }) {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color(0xFF1E1E22),
+                    tonalElevation = 8.dp,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        // Header
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Reader Settings", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(CircleShape)
+                                    .background(Color(0xFF2A2A30))
+                                    .clickable { showSettingsDialog = false },
+                                contentAlignment = Alignment.Center
+                            ) { Text("✕", fontSize = 14.sp, color = Color.LightGray) }
+                        }
+
+                        // Audio Card Section
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(Color(0xFF2A2A30))
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    Text("🌧️", fontSize = 24.sp)
+                                    Column {
+                                        Text("Ambient Rain", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                        Text("Soothing background audio", color = Color.Gray, fontSize = 12.sp)
+                                    }
+                                }
+                                Switch(
+                                    checked = isRainPlaying,
+                                    onCheckedChange = { isRainPlaying = it },
+                                    colors = SwitchDefaults.colors(
+                                        checkedThumbColor = Color(0xFFFFD700),
+                                        checkedTrackColor = Color(0xFF6200EE)
+                                    )
+                                )
+                            }
+
+                            AnimatedVisibility(visible = isRainPlaying) {
+                                Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text("Volume", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                        Text("${(rainVolume * 100).toInt()}%", color = Color(0xFFFFD700), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                    Slider(
+                                        value = rainVolume,
+                                        onValueChange = { rainVolume = it },
+                                        valueRange = 0f..1f,
+                                        colors = SliderDefaults.colors(
+                                            thumbColor = Color(0xFFFFD700),
+                                            activeTrackColor = Color(0xFF6200EE),
+                                            inactiveTrackColor = Color(0xFF3E3E46)
+                                        )
+                                    )
+                                }
+                            }
+                        }
+
+                        // Page Texture Section (PERFECTLY BALANCED GAPS & SYMMETRY)
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("PAGE TEXTURE", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                            // Custom Gallery Action Button
+                            Button(
+                                onClick = { galleryLauncher.launch("image/*") },
+                                modifier = Modifier.fillMaxWidth().height(48.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = if (currentPageStyle == PageStyle.CUSTOM) Color(0xFF6200EE) else Color(0xFF2A2A30)),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text("🖼️", fontSize = 18.sp)
+                                        Text("Choose from Gallery...", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                    if (currentPageStyle == PageStyle.CUSTOM) {
+                                        Text("✔ Active", color = Color(0xFFFFD700), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    }
+                                }
+                            }
+
+                            // Interactive 2-Column Grid (Exactly 8 items = 4 rows of 2, zero empty holes!)
+                            val presets = PageStyle.values().filter { it != PageStyle.CUSTOM }
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                presets.chunked(2).forEach { rowStyles ->
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        rowStyles.forEach { style ->
+                                            val isSelected = currentPageStyle == style
+                                            Box(
+                                                modifier = Modifier
+                                                    .weight(1f)
+                                                    .height(48.dp) // Uniform height makes tiles look crisp!
+                                                    .clip(RoundedCornerShape(12.dp))
+                                                    .background(if (isSelected) Color(0xFF383842) else Color(0xFF2A2A30))
+                                                    .border(
+                                                        width = if (isSelected) 2.dp else 1.dp,
+                                                        color = if (isSelected) Color(0xFFFFD700) else Color.Transparent,
+                                                        shape = RoundedCornerShape(12.dp)
+                                                    )
+                                                    .clickable { currentPageStyle = style }
+                                                    .padding(horizontal = 12.dp),
+                                                contentAlignment = Alignment.CenterStart
+                                            ) {
+                                                Row(
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                                ) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(20.dp)
+                                                            .clip(CircleShape)
+                                                            .background(if (style.drawableRes != null) Color(0xFFD7CCC8) else style.color)
+                                                            .border(1.dp, Color.Gray, CircleShape)
+                                                    )
+                                                    Text(
+                                                        text = style.label,
+                                                        color = if (isSelected) Color.White else Color.LightGray,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                        maxLines = 1
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
