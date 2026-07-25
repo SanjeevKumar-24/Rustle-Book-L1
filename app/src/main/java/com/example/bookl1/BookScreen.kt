@@ -39,6 +39,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Color
@@ -55,6 +56,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -72,9 +74,8 @@ import kotlin.math.roundToInt
 // --- 1. DATA MODELS & PERSISTENCE ---
 enum class Tool { NONE, PEN, HIGHLIGHT, ERASER, NOTE, SCANNER }
 data class DrawStroke(val points: List<Offset>, val tool: Tool)
-data class StickyNoteData(val id: String, val position: Offset, var text: String)
+data class StickyNoteData(val id: String, var position: Offset, var text: String)
 
-// UPDATED: Added "Nordic Blue" (SKY) so there are exactly 8 items (4 rows of 2) - no empty holes!
 enum class PageStyle(val label: String, val color: Color, val drawableRes: Int?) {
     PAPER("Old Paper", Color.Transparent, R.drawable.old_paper),
     TEXTURE_1("Cream", Color.Transparent, R.drawable.bg_texture_1),
@@ -83,7 +84,7 @@ enum class PageStyle(val label: String, val color: Color, val drawableRes: Int?)
     WHITE("Clean", Color(0xFFFFFFFF), null),
     SEPIA("Warm", Color(0xFFF4ECD8), null),
     MINT("Zen Mint", Color(0xFFE8F5E9), null),
-    SKY("Nordic Blue", Color(0xFFE1EBF0), null), // 8th Item! Fills the blank space perfectly.
+    SKY("Nordic Blue", Color(0xFFE1EBF0), null),
     CUSTOM("Custom Gallery", Color.Transparent, null)
 }
 
@@ -100,6 +101,8 @@ object ActiveBook {
 }
 
 fun saveAnnotations(context: Context, strokes: Map<Int, List<DrawStroke>>, notes: Map<Int, List<StickyNoteData>>, bookmarks: List<Int>) {
+    if (ActiveBook.fileName == "default.pdf") return
+
     val sStrokes = HashMap<Int, List<SavedStroke>>()
     strokes.forEach { (page, list) ->
         sStrokes[page] = list.map { SavedStroke(it.points.map { p -> p.x }, it.points.map { p -> p.y }, it.tool.name) }
@@ -116,6 +119,13 @@ fun saveAnnotations(context: Context, strokes: Map<Int, List<DrawStroke>>, notes
 }
 
 fun loadAnnotations(context: Context): SavedData? {
+    val buggySharedFile = File(context.filesDir, "default.pdf.dat")
+    if (buggySharedFile.exists()) {
+        buggySharedFile.delete()
+    }
+
+    if (ActiveBook.fileName == "default.pdf") return null
+
     val memoryFile = File(context.filesDir, "${ActiveBook.fileName}.dat")
     if (!memoryFile.exists()) return null
     return try {
@@ -200,7 +210,6 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
         }
     }
 
-    // Scales rain volume to be 50% softer than page flip sound
     LaunchedEffect(isRainPlaying, rainVolume) {
         try {
             if (isRainPlaying) {
@@ -396,7 +405,8 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                         detectTapGestures(onTap = { offset ->
                                             val trueOffset = unscaleOffset(offset)
                                             val list = notesMap[page] ?: mutableListOf()
-                                            list.add(StickyNoteData(java.util.UUID.randomUUID().toString(), trueOffset, "Type here..."))
+                                            // Empty string initial text so placeholder displays natively
+                                            list.add(StickyNoteData(java.util.UUID.randomUUID().toString(), trueOffset, ""))
                                             notesMap[page] = list
                                             currentTool = Tool.NONE
                                             saveAnnotations(context, strokesMap, notesMap, bookmarks)
@@ -496,29 +506,123 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                 )
                             }
 
+                            // --- DRAGGABLE & EDITABLE STICKY NOTES ---
                             notesMap[page]?.forEach { note ->
                                 var showDialog by remember { mutableStateOf(false) }
-                                var noteText by remember { mutableStateOf(note.text) }
+                                var noteText by remember(note.id, note.text) { mutableStateOf(note.text) }
+                                var notePosition by remember(note.id) { mutableStateOf(note.position) }
 
                                 Box(
                                     modifier = Modifier
-                                        .offset { IntOffset(note.position.x.toInt() - 30, note.position.y.toInt() - 30) }
-                                        .size(60.dp)
+                                        .offset { IntOffset(notePosition.x.toInt() - 30, notePosition.y.toInt() - 30) }
+                                        .size(56.dp)
+                                        .shadow(6.dp, RoundedCornerShape(12.dp))
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(Color(0xFFFFF176)) // Post-it Yellow
+                                        .border(1.dp, Color(0xFFFBC02D), RoundedCornerShape(12.dp))
+                                        .pointerInput(note.id) {
+                                            detectDragGestures(
+                                                onDragEnd = {
+                                                    note.position = notePosition
+                                                    saveAnnotations(context, strokesMap, notesMap, bookmarks)
+                                                },
+                                                onDrag = { change, dragAmount ->
+                                                    change.consume()
+                                                    notePosition = Offset(
+                                                        notePosition.x + (dragAmount.x / scale),
+                                                        notePosition.y + (dragAmount.y / scale)
+                                                    )
+                                                }
+                                            )
+                                        }
                                         .clickable { showDialog = true },
                                     contentAlignment = Alignment.Center
-                                ) { Text("📝", fontSize = 32.sp) }
+                                ) {
+                                    Column(
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center,
+                                        modifier = Modifier.padding(4.dp)
+                                    ) {
+                                        Text("📝", fontSize = 20.sp)
+                                        if (note.text.isNotBlank()) {
+                                            Text(
+                                                text = note.text,
+                                                color = Color.Black,
+                                                fontSize = 8.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
 
                                 if (showDialog) {
                                     AlertDialog(
                                         onDismissRequest = { showDialog = false },
-                                        title = { Text("Sticky Note") },
-                                        text = { OutlinedTextField(value = noteText, onValueChange = { noteText = it; note.text = it }) },
+                                        title = {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Text("📝", fontSize = 22.sp)
+                                                Text("Sticky Note", color = Color.White, fontWeight = FontWeight.Bold)
+                                            }
+                                        },
+                                        text = {
+                                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                OutlinedTextField(
+                                                    value = noteText,
+                                                    onValueChange = { noteText = it },
+                                                    placeholder = { Text("Type your note here...", color = Color.Gray) },
+                                                    colors = OutlinedTextFieldDefaults.colors(
+                                                        focusedBorderColor = Color(0xFFFFD700),
+                                                        unfocusedBorderColor = Color(0x66FFFFFF),
+                                                        focusedTextColor = Color.White,
+                                                        unfocusedTextColor = Color.White,
+                                                        cursorColor = Color(0xFFFFD700)
+                                                    ),
+                                                    modifier = Modifier
+                                                        .fillMaxWidth()
+                                                        .heightIn(min = 100.dp),
+                                                    maxLines = 5
+                                                )
+                                            }
+                                        },
                                         confirmButton = {
-                                            Button(onClick = {
-                                                showDialog = false
-                                                saveAnnotations(context, strokesMap, notesMap, bookmarks)
-                                            }) { Text("Save") }
-                                        }
+                                            Button(
+                                                onClick = {
+                                                    note.text = noteText
+                                                    saveAnnotations(context, strokesMap, notesMap, bookmarks)
+                                                    showDialog = false
+                                                },
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700))
+                                            ) {
+                                                Text("Save", color = Color.Black, fontWeight = FontWeight.Bold)
+                                            }
+                                        },
+                                        dismissButton = {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                TextButton(
+                                                    onClick = {
+                                                        val list = notesMap[page] ?: mutableListOf()
+                                                        list.removeAll { it.id == note.id }
+                                                        notesMap[page] = list
+                                                        saveAnnotations(context, strokesMap, notesMap, bookmarks)
+                                                        showDialog = false
+                                                    },
+                                                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFFF5252))
+                                                ) {
+                                                    Text("Delete", fontWeight = FontWeight.Bold)
+                                                }
+
+                                                OutlinedButton(onClick = { showDialog = false }) {
+                                                    Text("Cancel", color = Color.LightGray)
+                                                }
+                                            }
+                                        },
+                                        containerColor = Color(0xFF222226),
+                                        shape = RoundedCornerShape(20.dp)
                                     )
                                 }
                             }
@@ -851,7 +955,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                             }
                         }
 
-                        // Page Texture Section (PERFECTLY BALANCED GAPS & SYMMETRY)
+                        // Page Texture Section
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("PAGE TEXTURE", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
@@ -877,7 +981,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                 }
                             }
 
-                            // Interactive 2-Column Grid (Exactly 8 items = 4 rows of 2, zero empty holes!)
+                            // Interactive 2-Column Grid
                             val presets = PageStyle.values().filter { it != PageStyle.CUSTOM }
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 presets.chunked(2).forEach { rowStyles ->
@@ -887,7 +991,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                             Box(
                                                 modifier = Modifier
                                                     .weight(1f)
-                                                    .height(48.dp) // Uniform height makes tiles look crisp!
+                                                    .height(48.dp)
                                                     .clip(RoundedCornerShape(12.dp))
                                                     .background(if (isSelected) Color(0xFF383842) else Color(0xFF2A2A30))
                                                     .border(

@@ -18,18 +18,16 @@ import java.io.FileOutputStream
 
 class MainActivity : ComponentActivity() {
 
-    // This is your main ViewModel. It holds the PDF data.
     private val viewModel: PdfViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // 1. Copy a sample PDF from your assets folder
         val samplePdf = copyAssetToCache("sample.pdf")
 
-        // 2. Tell the ViewModel to open that file
         if (samplePdf != null) {
+            ActiveBook.fileName = samplePdf.name
             viewModel.openBook(samplePdf)
         }
 
@@ -39,15 +37,12 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // Track exactly which screen the user is currently looking at
                     var currentScreen by remember { mutableStateOf("SPLASH") }
 
-                    // Navigation Logic
                     when (currentScreen) {
                         "SPLASH" -> {
                             VideoSplashScreen(
                                 onSplashFinished = {
-                                    // When the video ends, go to the Library
                                     currentScreen = "LIBRARY"
                                 }
                             )
@@ -55,19 +50,17 @@ class MainActivity : ComponentActivity() {
                         "LIBRARY" -> {
                             LibraryScreen(
                                 onBookSelected = { selectedFile ->
-                                    // Tell the PDF engine to load the exact file you tapped on!
+                                    // THE CRITICAL FIX: Set the unique file name before opening!
+                                    ActiveBook.fileName = selectedFile.name
                                     viewModel.openBook(selectedFile)
-                                    // Switch over to the Book Reader screen
                                     currentScreen = "BOOK"
                                 }
                             )
                         }
                         "BOOK" -> {
-                            // Pass the class-level viewModel that has the actual PDF loaded inside it!
                             BookScreen(
                                 viewModel = viewModel,
                                 onBackClicked = {
-                                    // When the ⬅️ button is tapped, go back to the Library
                                     currentScreen = "LIBRARY"
                                 }
                             )
@@ -78,11 +71,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Helper function to extract a file from the 'assets' folder for testing
     private fun copyAssetToCache(fileName: String): File? {
         return try {
             val cacheFile = File(cacheDir, fileName)
-            // Only copy if we haven't done it already
             if (!cacheFile.exists()) {
                 assets.open(fileName).use { inputStream ->
                     FileOutputStream(cacheFile).use { outputStream ->
