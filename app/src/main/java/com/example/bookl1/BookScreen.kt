@@ -7,6 +7,8 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import android.net.Uri
+import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -27,13 +29,17 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -54,8 +60,10 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -66,10 +74,14 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.*
+import java.util.Locale
 import kotlin.math.roundToInt
+import kotlin.coroutines.resume
+import kotlin.coroutines.suspendCoroutine
 
 // --- 1. DATA MODELS & PERSISTENCE ---
 enum class Tool { NONE, PEN, HIGHLIGHT, ERASER, NOTE, SCANNER }
@@ -133,12 +145,26 @@ fun loadAnnotations(context: Context): SavedData? {
     } catch (e: Exception) { null }
 }
 
+// Helper: Async background OCR scanner for searching and Text-to-Speech
+suspend fun scanBitmapForText(bitmap: Bitmap): String = suspendCoroutine { cont ->
+    try {
+        val image = InputImage.fromBitmap(bitmap, 0)
+        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        recognizer.process(image)
+            .addOnSuccessListener { cont.resume(it.text) }
+            .addOnFailureListener { cont.resume("") }
+    } catch (e: Exception) {
+        cont.resume("")
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     val pagerState = rememberPagerState(pageCount = { viewModel.pageCount })
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
@@ -189,6 +215,63 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     var showPageOverview by remember { mutableStateOf(false) }
     var showBookmarksList by remember { mutableStateOf(false) }
 
+    // --- SEARCH STATES ---
+    var showSearchDialog by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var isSearching by remember { mutableStateOf(false) }
+    var searchProgress by remember { mutableFloatStateOf(0f) }
+    var searchCurrentPage by remember { mutableIntStateOf(0) }
+    val searchResults = remember { mutableStateListOf<Pair<Int, String>>() }
+    var searchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    // --- TEXT TO SPEECH (TTS) STATES & ENGINE ---
+    var tts by remember { mutableStateOf<TextToSpeech?>(null) }
+    var isSpeaking by remember { mutableStateOf(false) }
+    var isReadingLoading by remember { mutableStateOf(false) }
+
+    DisposableEffect(context) {
+        val engine = TextToSpeech(context) { status ->
+            if (status == TextToSpeech.SUCCESS) {
+                tts?.language = Locale.getDefault()
+            }
+        }
+        engine.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(utteranceId: String?) { isSpeaking = true }
+            override fun onDone(utteranceId: String?) { isSpeaking = false }
+            override fun onError(utteranceId: String?) { isSpeaking = false }
+        })
+        tts = engine
+        onDispose {
+            try {
+                engine.stop()
+                engine.shutdown()
+            } catch (e: Exception) { e.printStackTrace() }
+        }
+    }
+
+    val toggleReadAloud = {
+        if (isSpeaking || isReadingLoading) {
+            tts?.stop()
+            isSpeaking = false
+            isReadingLoading = false
+        } else {
+            scope.launch {
+                isReadingLoading = true
+                val bmp = viewModel.getPageImage(pagerState.currentPage)
+                if (bmp != null) {
+                    val text = scanBitmapForText(bmp)
+                    isReadingLoading = false
+                    if (text.isNotBlank()) {
+                        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "PAGE_READ_${pagerState.currentPage}")
+                        isSpeaking = true
+                    }
+                } else {
+                    isReadingLoading = false
+                }
+            }
+        }
+    }
+
     val strokesMap = remember(ActiveBook.fileName) { mutableStateMapOf<Int, MutableList<DrawStroke>>() }
     val notesMap = remember(ActiveBook.fileName) { mutableStateMapOf<Int, MutableList<StickyNoteData>>() }
     val bookmarks = remember(ActiveBook.fileName) { mutableStateListOf<Int>() }
@@ -198,16 +281,17 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     var showScannerDialog by remember { mutableStateOf(false) }
     var scannedTextResult by remember { mutableStateOf("Scanning...") }
 
-    // --- RAIN AUDIO ENGINE ---
+    // --- AUDIO ENGINES (CRITICAL MEMORY FIX: Single reusable players!) ---
     val rainPlayer = remember {
         try {
-            MediaPlayer.create(context, R.raw.rain)?.apply {
-                isLooping = true
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        }
+            MediaPlayer.create(context, R.raw.rain)?.apply { isLooping = true }
+        } catch (e: Exception) { null }
+    }
+
+    val pageFlipPlayer = remember {
+        try {
+            MediaPlayer.create(context, R.raw.page_flip)
+        } catch (e: Exception) { null }
     }
 
     LaunchedEffect(isRainPlaying, rainVolume) {
@@ -223,21 +307,18 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                     rainPlayer.pause()
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (e: Exception) { e.printStackTrace() }
     }
 
+    // Automatically clean up audio hardware when leaving the screen
     DisposableEffect(Unit) {
         onDispose {
             try {
-                if (rainPlayer?.isPlaying == true) {
-                    rainPlayer.stop()
-                }
+                if (rainPlayer?.isPlaying == true) rainPlayer.stop()
                 rainPlayer?.release()
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+                if (pageFlipPlayer?.isPlaying == true) pageFlipPlayer.stop()
+                pageFlipPlayer?.release()
+            } catch (e: Exception) { e.printStackTrace() }
         }
     }
 
@@ -258,11 +339,18 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
 
     LaunchedEffect(pagerState.currentPage) {
         scale = 1f; offsetX = 0f; offsetY = 0f
+        if (isSpeaking) {
+            tts?.stop()
+            isSpeaking = false
+        }
         if (!isFirstLoad) {
             try {
-                val player = MediaPlayer.create(context, R.raw.page_flip)
-                player.start()
-                player.setOnCompletionListener { it.release() }
+                // CRITICAL FIX: Reuses ONE player instead of creating new memory leaks per page!
+                if (pageFlipPlayer?.isPlaying == true) {
+                    pageFlipPlayer.pause()
+                }
+                pageFlipPlayer?.seekTo(0)
+                pageFlipPlayer?.start()
             } catch (e: Exception) { e.printStackTrace() }
         } else isFirstLoad = false
     }
@@ -405,7 +493,6 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                         detectTapGestures(onTap = { offset ->
                                             val trueOffset = unscaleOffset(offset)
                                             val list = notesMap[page] ?: mutableListOf()
-                                            // Empty string initial text so placeholder displays natively
                                             list.add(StickyNoteData(java.util.UUID.randomUUID().toString(), trueOffset, ""))
                                             notesMap[page] = list
                                             currentTool = Tool.NONE
@@ -506,7 +593,6 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                 )
                             }
 
-                            // --- DRAGGABLE & EDITABLE STICKY NOTES ---
                             notesMap[page]?.forEach { note ->
                                 var showDialog by remember { mutableStateOf(false) }
                                 var noteText by remember(note.id, note.text) { mutableStateOf(note.text) }
@@ -518,7 +604,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                         .size(56.dp)
                                         .shadow(6.dp, RoundedCornerShape(12.dp))
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(Color(0xFFFFF176)) // Post-it Yellow
+                                        .background(Color(0xFFFFF176))
                                         .border(1.dp, Color(0xFFFBC02D), RoundedCornerShape(12.dp))
                                         .pointerInput(note.id) {
                                             detectDragGestures(
@@ -636,7 +722,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
             }
         }
 
-        // --- 2. TOP NAVIGATION BAR ---
+        // --- 2. TOP NAVIGATION BAR WITH AUDIO BANNER ---
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -657,9 +743,42 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                         Text(text = "📑", fontSize = 20.sp, modifier = Modifier.clickable { showBookmarksList = true })
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                        Text(text = "🔍", fontSize = 20.sp, modifier = Modifier.clickable { })
+                        Text(
+                            text = if (isReadingLoading) "⏳" else if (isSpeaking) "⏹️" else "🔊",
+                            fontSize = 20.sp,
+                            modifier = Modifier.clickable { toggleReadAloud() }
+                        )
+                        Text(text = "🔍", fontSize = 20.sp, modifier = Modifier.clickable { showSearchDialog = true })
                         Text(text = "⚙️", fontSize = 20.sp, modifier = Modifier.clickable { showSettingsDialog = true })
                         Text(text = "☰", fontSize = 20.sp, modifier = Modifier.clickable { isToolbarVisible = !isToolbarVisible })
+                    }
+                }
+
+                AnimatedVisibility(visible = isSpeaking || isReadingLoading) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color(0xFF6200EE))
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(if (isReadingLoading) "⏳" else "🔊", fontSize = 16.sp)
+                            Text(
+                                text = if (isReadingLoading) "Extracting text from page..." else "Reading Page ${pagerState.currentPage + 1}",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Text(
+                            text = "Stop ⏹️",
+                            color = Color(0xFFFFD700),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.clickable { toggleReadAloud() }
+                        )
                     }
                 }
             }
@@ -870,7 +989,206 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
             }
         }
 
-        // --- 7. MODERN PRO SETTINGS MODAL DASHBOARD ---
+        // --- 7. FULLSCREEN BOOK SEARCH DIALOG ---
+        if (showSearchDialog) {
+            val runSearch = {
+                keyboardController?.hide()
+                searchJob?.cancel()
+                searchResults.clear()
+                val queryLower = searchQuery.trim().lowercase()
+
+                if (queryLower.isNotEmpty()) {
+                    searchJob = scope.launch {
+                        isSearching = true
+                        val totalPages = viewModel.pageCount
+
+                        for (p in 0 until totalPages) {
+                            if (!isSearching) break
+                            searchCurrentPage = p
+                            searchProgress = (p + 1).toFloat() / if (totalPages > 0) totalPages else 1
+
+                            val bmp = viewModel.getPageImage(p)
+                            if (bmp != null) {
+                                val text = scanBitmapForText(bmp)
+                                val textLower = text.lowercase()
+                                val matchIndex = textLower.indexOf(queryLower)
+                                if (matchIndex != -1) {
+                                    val start = maxOf(0, matchIndex - 35)
+                                    val end = minOf(text.length, matchIndex + queryLower.length + 65)
+                                    val snippet = "..." + text.substring(start, end).replace("\n", " ") + "..."
+                                    searchResults.add(p to snippet)
+                                }
+                            }
+                            // CRITICAL MEMORY FIX: 15ms delay gives Android Garbage Collector time to free old page Bitmaps!
+                            delay(15)
+                        }
+                        isSearching = false
+                    }
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFA121212))
+                    .zIndex(100f)
+                    .clickable(enabled = false) {}
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp)
+                        .statusBarsPadding()
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("🔍 Search in Book", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "❌",
+                            fontSize = 22.sp,
+                            modifier = Modifier.clickable {
+                                isSearching = false
+                                searchJob?.cancel()
+                                showSearchDialog = false
+                            }
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("Enter keyword (e.g. money, habit)...", color = Color.Gray, fontSize = 14.sp) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = { runSearch() }),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFFFFD700),
+                                unfocusedBorderColor = Color(0xFF3E3E46),
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                cursorColor = Color(0xFFFFD700)
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+
+                        Button(
+                            onClick = { runSearch() },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.height(54.dp)
+                        ) {
+                            Text("Find", color = Color.Black, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    AnimatedVisibility(visible = isSearching) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            LinearProgressIndicator(
+                                progress = searchProgress,
+                                color = Color(0xFFFFD700),
+                                trackColor = Color(0xFF2A2A30),
+                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Scanning page ${searchCurrentPage + 1} of ${viewModel.pageCount}...",
+                                    color = Color.LightGray,
+                                    fontSize = 12.sp
+                                )
+                                Text(
+                                    text = "Stop ⏹️",
+                                    color = Color(0xFFFF5252),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.clickable {
+                                        isSearching = false
+                                        searchJob?.cancel()
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    if (searchResults.isEmpty() && !isSearching) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = if (searchQuery.isBlank()) "Type a word above to search every page." else "No matches found for \"$searchQuery\".",
+                                color = Color.Gray,
+                                fontSize = 15.sp
+                            )
+                        }
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxSize().padding(bottom = 16.dp)
+                        ) {
+                            items(searchResults) { (resultPage, snippet) ->
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(16.dp))
+                                        .background(Color(0xFF2A2A30))
+                                        .border(1.dp, Color(0xFF3E3E46), RoundedCornerShape(16.dp))
+                                        .clickable {
+                                            scope.launch { pagerState.scrollToPage(resultPage) }
+                                            isSearching = false
+                                            searchJob?.cancel()
+                                            showSearchDialog = false
+                                        }
+                                        .padding(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(Color(0xFF6200EE))
+                                                .padding(horizontal = 10.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                text = "Page ${resultPage + 1}",
+                                                color = Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        Text("Teleport ➡️", color = Color(0xFFFFD700), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    }
+
+                                    Text(
+                                        text = snippet,
+                                        color = Color.LightGray,
+                                        fontSize = 13.sp,
+                                        lineHeight = 18.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- 8. MODERN PRO SETTINGS MODAL DASHBOARD ---
         if (showSettingsDialog) {
             Dialog(onDismissRequest = { showSettingsDialog = false }) {
                 Surface(
@@ -883,7 +1201,6 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                         modifier = Modifier.padding(20.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        // Header
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -900,7 +1217,6 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                             ) { Text("✕", fontSize = 14.sp, color = Color.LightGray) }
                         }
 
-                        // Audio Card Section
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -955,11 +1271,9 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                             }
                         }
 
-                        // Page Texture Section
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                             Text("PAGE TEXTURE", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 
-                            // Custom Gallery Action Button
                             Button(
                                 onClick = { galleryLauncher.launch("image/*") },
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -981,7 +1295,6 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                 }
                             }
 
-                            // Interactive 2-Column Grid
                             val presets = PageStyle.values().filter { it != PageStyle.CUSTOM }
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 presets.chunked(2).forEach { rowStyles ->

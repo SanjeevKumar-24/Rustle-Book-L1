@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Using built-in native Android parent theme to prevent AAPT linking errors -->
+    <style name="Theme.BOOKL1" parent="android:Theme.Material.NoActionBar">
+        <!-- Sets the starting background to pure black instead of white -->
+        <item name="android:windowBackground">@android:color/black</item>
 
-    <style name="Theme.BOOKL1" parent="android:Theme.Material.Light.NoActionBar" />
+        <!-- Makes system bars transparent so your video is 100% full screen -->
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
 </resources>
