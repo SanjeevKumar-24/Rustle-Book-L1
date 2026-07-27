@@ -1,67 +1,96 @@
 package com.example.bookl1
 
-import android.media.MediaPlayer
 import android.net.Uri
 import android.widget.VideoView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 
 @Composable
-fun VideoSplashScreen(onSplashFinished: () -> Unit) {
+fun SplashScreen(onTimeout: () -> Unit) {
     val context = LocalContext.current
-    var isFinished by remember { mutableStateOf(false) }
-
-    // Ensures we only trigger the navigation callback once
-    val finishSplash = {
-        if (!isFinished) {
-            isFinished = true
-            onSplashFinished()
-        }
-    }
+    val videoRes = R.raw.splash_video
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
-            // Touching anywhere on the screen instantly skips the video!
-            .clickable { finishSplash() }
+            .background(Color(0xFF121212)), // Rustle Mandala Black
+        contentAlignment = Alignment.Center
     ) {
-        // Fullscreen Video Player
+        // --- LAYER 1: NATIVE VIDEO PLAYER ---
         AndroidView(
+            modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                VideoView(ctx).apply {
-                    val videoUri = Uri.parse("android.resource://${ctx.packageName}/${R.raw.splash_video}")
+                object : VideoView(ctx) {
+                    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+                        val width = getDefaultSize(0, widthMeasureSpec)
+                        val height = getDefaultSize(0, heightMeasureSpec)
+                        setMeasuredDimension(width, height)
+                    }
+                }.apply {
+                    val videoUri = Uri.parse("android.resource://${ctx.packageName}/$videoRes")
                     setVideoURI(videoUri)
+                    setMediaController(null)
 
-                    setOnPreparedListener { mediaPlayer ->
-                        // Scales video to fill screen edge-to-edge seamlessly
-                        mediaPlayer.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING)
-
-                        // Jumps 300ms ahead to bypass any initial dark/empty frames from exporting
-                        mediaPlayer.seekTo(300)
-                        mediaPlayer.start()
-                    }
-
-                    // When video finishes on its own, jump to Library screen
+                    // Plays the video COMPLETELY from start to finish
                     setOnCompletionListener {
-                        finishSplash()
+                        onTimeout()
                     }
 
-                    // If video fails to load for any reason, don't trap the user—jump directly to Library
+                    // Fallback in case the video fails to load or corrupts
                     setOnErrorListener { _, _, _ ->
-                        finishSplash()
+                        onTimeout()
                         true
                     }
+
+                    start()
                 }
             },
-            modifier = Modifier.fillMaxSize()
+            update = { videoView ->
+                if (!videoView.isPlaying) {
+                    videoView.start()
+                }
+            }
         )
+
+        // --- LAYER 2: TRANSPARENT TOUCH INTERCEPTOR (TAP ANYWHERE TO SKIP) ---
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable(onClick = { onTimeout() })
+        )
+
+        // --- LAYER 3: VISIBLE SKIP BUTTON ---
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .statusBarsPadding()
+                .padding(16.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(Color(0x801E1E1E))
+                .border(1.dp, Color(0xFFD4AF37), RoundedCornerShape(20.dp))
+                .clickable { onTimeout() }
+                .padding(horizontal = 14.dp, vertical = 6.dp)
+        ) {
+            Text(
+                text = "Skip ⏭️",
+                color = Color(0xFFD4AF37),
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }

@@ -3,12 +3,14 @@ package com.example.bookl1
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import android.net.Uri
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -40,6 +42,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -59,9 +62,12 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -83,7 +89,14 @@ import kotlin.math.roundToInt
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
-// --- 1. DATA MODELS & PERSISTENCE ---
+// --- 1. RUSTLE / RUSTK THEME PALETTE ---
+val ThemeDarkBg = Color(0xFF121212)     // Deep Charcoal / Mandala Black
+val ThemeCardBg = Color(0xFF1E1E1E)     // Sleek Dark Card & Toolbar BG
+val ThemeAccentBlue = Color(0xFF2C2C2C) // Secondary Button & Item Accent
+val ThemeGold = Color(0xFFD4AF37)       // Rustle Brand Gold
+val ThemeGoldLight = Color(0xFFF3E5AB)  // Soft Parchment Highlight
+
+// --- 2. DATA MODELS & PERSISTENCE ---
 enum class Tool { NONE, PEN, HIGHLIGHT, ERASER, NOTE, SCANNER }
 data class DrawStroke(val points: List<Offset>, val tool: Tool)
 data class StickyNoteData(val id: String, var position: Offset, var text: String)
@@ -109,11 +122,17 @@ data class SavedData(
 ) : Serializable
 
 object ActiveBook {
-    var fileName: String = "default.pdf"
+    var fileName: String = ""
+}
+
+// Helper to ignore sample/default files
+private fun isDefaultOrSampleFile(fileName: String): Boolean {
+    val cleanName = fileName.trim().lowercase()
+    return cleanName.isEmpty() || cleanName == "default.pdf" || cleanName == "sample.pdf"
 }
 
 fun saveAnnotations(context: Context, strokes: Map<Int, List<DrawStroke>>, notes: Map<Int, List<StickyNoteData>>, bookmarks: List<Int>) {
-    if (ActiveBook.fileName == "default.pdf") return
+    if (isDefaultOrSampleFile(ActiveBook.fileName)) return
 
     val sStrokes = HashMap<Int, List<SavedStroke>>()
     strokes.forEach { (page, list) ->
@@ -135,8 +154,12 @@ fun loadAnnotations(context: Context): SavedData? {
     if (buggySharedFile.exists()) {
         buggySharedFile.delete()
     }
+    val buggySampleFile = File(context.filesDir, "sample.pdf.dat")
+    if (buggySampleFile.exists()) {
+        buggySampleFile.delete()
+    }
 
-    if (ActiveBook.fileName == "default.pdf") return null
+    if (isDefaultOrSampleFile(ActiveBook.fileName)) return null
 
     val memoryFile = File(context.filesDir, "${ActiveBook.fileName}.dat")
     if (!memoryFile.exists()) return null
@@ -165,6 +188,18 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val keyboardController = LocalSoftwareKeyboardController.current
+    val clipboardManager = LocalClipboardManager.current
+    val configuration = LocalConfiguration.current
+
+    // --- TABLET & SCREEN SIZE DETECTION ---
+    val isTablet = remember(configuration) {
+        configuration.smallestScreenWidthDp >= 600 ||
+                (configuration.screenLayout and Configuration.SCREENLAYOUT_SIZE_MASK) >= Configuration.SCREENLAYOUT_SIZE_LARGE
+    }
+    val gridColumns = if (isTablet) 4 else 2
+    val dialogMaxWidth = if (isTablet) 600.dp else 400.dp
+    val toolbarIconSize = if (isTablet) 44.dp else 36.dp
+    val toolbarIconFontSize = if (isTablet) 24.sp else 20.sp
 
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
@@ -281,7 +316,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     var showScannerDialog by remember { mutableStateOf(false) }
     var scannedTextResult by remember { mutableStateOf("Scanning...") }
 
-    // --- AUDIO ENGINES (CRITICAL MEMORY FIX: Single reusable players!) ---
+    // --- AUDIO ENGINES ---
     val rainPlayer = remember {
         try {
             MediaPlayer.create(context, R.raw.rain)?.apply { isLooping = true }
@@ -310,7 +345,6 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
         } catch (e: Exception) { e.printStackTrace() }
     }
 
-    // Automatically clean up audio hardware when leaving the screen
     DisposableEffect(Unit) {
         onDispose {
             try {
@@ -345,7 +379,6 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
         }
         if (!isFirstLoad) {
             try {
-                // CRITICAL FIX: Reuses ONE player instead of creating new memory leaks per page!
                 if (pageFlipPlayer?.isPlaying == true) {
                     pageFlipPlayer.pause()
                 }
@@ -355,7 +388,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
         } else isFirstLoad = false
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF1E1E1E))) {
+    Box(modifier = Modifier.fillMaxSize().background(ThemeDarkBg)) {
 
         // --- 1. THE PDF VIEWER ---
         HorizontalPager(
@@ -559,35 +592,82 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                         for (i in 1 until scannerPoints.size) lineTo(scannerPoints[i].x, scannerPoints[i].y)
                                         lineTo(scannerPoints.first().x, scannerPoints.first().y)
                                     }
-                                    drawPath(path = scannerPath, color = Color(0xFF00E5FF), style = Stroke(width = 8f, cap = StrokeCap.Round, join = StrokeJoin.Round, pathEffect = PathEffect.dashPathEffect(floatArrayOf(30f, 15f))))
-                                    drawPath(path = scannerPath, color = Color(0xFF00E5FF).copy(alpha = 0.2f))
+                                    drawPath(path = scannerPath, color = ThemeGold, style = Stroke(width = 8f, cap = StrokeCap.Round, join = StrokeJoin.Round, pathEffect = PathEffect.dashPathEffect(floatArrayOf(30f, 15f))))
+                                    drawPath(path = scannerPath, color = ThemeGold.copy(alpha = 0.2f))
                                 }
                             }
 
+                            // --- SCANNED TEXT MODAL WITH COPY BUTTON & RUSTLE THEME ---
                             if (showScannerDialog) {
                                 AlertDialog(
                                     onDismissRequest = {
                                         showScannerDialog = false
                                         scannerPoints = emptyList()
                                     },
-                                    title = { Text("Scanned Text") },
-                                    text = { Text(scannedTextResult) },
-                                    confirmButton = {
-                                        Button(onClick = {
-                                            showScannerDialog = false
-                                            scannerPoints = emptyList()
-                                            currentTool = Tool.NONE
-                                        }) { Text("Close") }
+                                    modifier = Modifier.widthIn(max = dialogMaxWidth),
+                                    containerColor = ThemeCardBg,
+                                    titleContentColor = Color.White,
+                                    textContentColor = Color(0xFFA9B7C6),
+                                    shape = RoundedCornerShape(24.dp),
+                                    title = {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Text("⭕", fontSize = 22.sp)
+                                            Text("Scanned Text", fontWeight = FontWeight.Bold)
+                                        }
                                     },
-                                    dismissButton = {
-                                        if (scannedTextResult != "Scanning..." && !scannedTextResult.contains("No text found")) {
-                                            OutlinedButton(onClick = {
-                                                val url = "https://translate.google.com/?sl=auto&tl=en&text=${Uri.encode(scannedTextResult)}&op=translate"
-                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                    text = {
+                                        SelectionContainer {
+                                            Text(
+                                                text = scannedTextResult,
+                                                fontSize = 15.sp,
+                                                lineHeight = 22.sp,
+                                                color = Color.White
+                                            )
+                                        }
+                                    },
+                                    confirmButton = {
+                                        Button(
+                                            onClick = {
                                                 showScannerDialog = false
                                                 scannerPoints = emptyList()
                                                 currentTool = Tool.NONE
-                                            }) { Text("Translate") }
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = ThemeGold)
+                                        ) {
+                                            Text("Close", color = Color.Black, fontWeight = FontWeight.Bold)
+                                        }
+                                    },
+                                    dismissButton = {
+                                        if (scannedTextResult != "Scanning..." && !scannedTextResult.contains("No text found")) {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        clipboardManager.setText(AnnotatedString(scannedTextResult))
+                                                        Toast.makeText(context, "Text copied to clipboard!", Toast.LENGTH_SHORT).show()
+                                                    },
+                                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ThemeGold),
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, ThemeGold)
+                                                ) {
+                                                    Text("Copy 📋", fontWeight = FontWeight.Bold)
+                                                }
+
+                                                OutlinedButton(
+                                                    onClick = {
+                                                        val url = "https://translate.google.com/?sl=auto&tl=en&text=${Uri.encode(scannedTextResult)}&op=translate"
+                                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                                        showScannerDialog = false
+                                                        scannerPoints = emptyList()
+                                                        currentTool = Tool.NONE
+                                                    },
+                                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = ThemeGoldLight),
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, ThemeGoldLight)
+                                                ) {
+                                                    Text("Translate 🌐", fontWeight = FontWeight.Bold)
+                                                }
+                                            }
                                         }
                                     }
                                 )
@@ -604,8 +684,8 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                         .size(56.dp)
                                         .shadow(6.dp, RoundedCornerShape(12.dp))
                                         .clip(RoundedCornerShape(12.dp))
-                                        .background(Color(0xFFFFF176))
-                                        .border(1.dp, Color(0xFFFBC02D), RoundedCornerShape(12.dp))
+                                        .background(ThemeGoldLight)
+                                        .border(1.dp, ThemeGold, RoundedCornerShape(12.dp))
                                         .pointerInput(note.id) {
                                             detectDragGestures(
                                                 onDragEnd = {
@@ -646,6 +726,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                 if (showDialog) {
                                     AlertDialog(
                                         onDismissRequest = { showDialog = false },
+                                        modifier = Modifier.widthIn(max = dialogMaxWidth),
                                         title = {
                                             Row(
                                                 verticalAlignment = Alignment.CenterVertically,
@@ -662,11 +743,11 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                                     onValueChange = { noteText = it },
                                                     placeholder = { Text("Type your note here...", color = Color.Gray) },
                                                     colors = OutlinedTextFieldDefaults.colors(
-                                                        focusedBorderColor = Color(0xFFFFD700),
+                                                        focusedBorderColor = ThemeGold,
                                                         unfocusedBorderColor = Color(0x66FFFFFF),
                                                         focusedTextColor = Color.White,
                                                         unfocusedTextColor = Color.White,
-                                                        cursorColor = Color(0xFFFFD700)
+                                                        cursorColor = ThemeGold
                                                     ),
                                                     modifier = Modifier
                                                         .fillMaxWidth()
@@ -682,7 +763,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                                     saveAnnotations(context, strokesMap, notesMap, bookmarks)
                                                     showDialog = false
                                                 },
-                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700))
+                                                colors = ButtonDefaults.buttonColors(containerColor = ThemeGold)
                                             ) {
                                                 Text("Save", color = Color.Black, fontWeight = FontWeight.Bold)
                                             }
@@ -707,7 +788,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                                 }
                                             }
                                         },
-                                        containerColor = Color(0xFF222226),
+                                        containerColor = ThemeCardBg,
                                         shape = RoundedCornerShape(20.dp)
                                     )
                                 }
@@ -728,29 +809,32 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
         ) {
-            Column(modifier = Modifier.background(Color(0xFF2C2C2C))) {
+            Column(modifier = Modifier.background(ThemeCardBg)) {
                 Spacer(modifier = Modifier.statusBarsPadding())
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(horizontal = if (isTablet) 32.dp else 16.dp, vertical = 12.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                        Text(text = "⬅️", fontSize = 20.sp, modifier = Modifier.clickable { onBackClicked() })
-                        Text(text = "🔲", fontSize = 20.sp, modifier = Modifier.clickable { showPageOverview = true })
-                        Text(text = "📑", fontSize = 20.sp, modifier = Modifier.clickable { showBookmarksList = true })
+                    // REDUCED SPACING: Changed from 24.dp to 16.dp on phones so all icons fit without clipping!
+                    Row(horizontalArrangement = Arrangement.spacedBy(if (isTablet) 28.dp else 16.dp)) {
+                        Text(text = "⬅️", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { onBackClicked() })
+                        Text(text = "🔲", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { showPageOverview = true })
+                        Text(text = "📑", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { showBookmarksList = true })
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(if (isTablet) 28.dp else 16.dp)) {
                         Text(
                             text = if (isReadingLoading) "⏳" else if (isSpeaking) "⏹️" else "🔊",
-                            fontSize = 20.sp,
+                            fontSize = toolbarIconFontSize,
+                            color = Color.White,
                             modifier = Modifier.clickable { toggleReadAloud() }
                         )
-                        Text(text = "🔍", fontSize = 20.sp, modifier = Modifier.clickable { showSearchDialog = true })
-                        Text(text = "⚙️", fontSize = 20.sp, modifier = Modifier.clickable { showSettingsDialog = true })
-                        Text(text = "☰", fontSize = 20.sp, modifier = Modifier.clickable { isToolbarVisible = !isToolbarVisible })
+                        Text(text = "🔍", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { showSearchDialog = true })
+                        Text(text = "⚙️", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { showSettingsDialog = true })
+                        // CHANGED TO TOOLBOX EMOJI (🧰) AND ADDED EXPLICIT WHITE COLOR:
+                        Text(text = "🧰", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { isToolbarVisible = !isToolbarVisible })
                     }
                 }
 
@@ -758,8 +842,8 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(Color(0xFF6200EE))
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                            .background(ThemeAccentBlue)
+                            .padding(horizontal = if (isTablet) 32.dp else 16.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -774,7 +858,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                         }
                         Text(
                             text = "Stop ⏹️",
-                            color = Color(0xFFFFD700),
+                            color = ThemeGold,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.clickable { toggleReadAloud() }
@@ -789,7 +873,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
             visible = isToolbarVisible,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 72.dp),
+                .padding(bottom = if (isTablet) 90.dp else 72.dp),
             enter = slideInVertically(initialOffsetY = { it }) + fadeIn(),
             exit = slideOutVertically(targetOffsetY = { it }) + fadeOut()
         ) {
@@ -798,7 +882,8 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                     modifier = Modifier
                         .offset { IntOffset(toolboxOffsetX.roundToInt(), toolboxOffsetY.roundToInt()) }
                         .clip(RoundedCornerShape(50))
-                        .background(Color(0xFF424242))
+                        .background(ThemeCardBg)
+                        .border(1.dp, ThemeGold, RoundedCornerShape(50))
                         .pointerInput(Unit) {
                             detectDragGestures { change, dragAmount ->
                                 change.consume()
@@ -806,8 +891,8 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                 toolboxOffsetY += dragAmount.y
                             }
                         }
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        .padding(horizontal = if (isTablet) 20.dp else 12.dp, vertical = if (isTablet) 10.dp else 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (isTablet) 12.dp else 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val tools = listOf(Tool.NONE to "✋", Tool.PEN to "🖊️", Tool.HIGHLIGHT to "🖍️", Tool.ERASER to "🧽", Tool.NOTE to "📝", Tool.SCANNER to "⭕")
@@ -815,14 +900,14 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                     tools.forEach { (t, emoji) ->
                         Box(
                             modifier = Modifier
-                                .size(36.dp)
-                                .background(if (currentTool == t) Color(0xFF6200EE) else Color.Transparent, CircleShape)
+                                .size(toolbarIconSize)
+                                .background(if (currentTool == t) ThemeGold.copy(alpha = 0.3f) else Color.Transparent, CircleShape)
                                 .clickable {
                                     currentTool = t
                                     scannerPoints = emptyList()
                                 },
                             contentAlignment = Alignment.Center
-                        ) { Text(text = emoji, fontSize = 20.sp) }
+                        ) { Text(text = emoji, fontSize = toolbarIconFontSize) }
                     }
 
                     Box(modifier = Modifier.height(20.dp).width(1.dp).background(Color.Gray))
@@ -830,13 +915,13 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                     val isBookmarked = bookmarks.contains(pagerState.currentPage)
                     Box(
                         modifier = Modifier
-                            .size(36.dp)
+                            .size(toolbarIconSize)
                             .clickable {
                                 if (isBookmarked) bookmarks.remove(pagerState.currentPage) else bookmarks.add(pagerState.currentPage)
                                 saveAnnotations(context, strokesMap, notesMap, bookmarks)
                             },
                         contentAlignment = Alignment.Center
-                    ) { Text(text = if (isBookmarked) "🔖" else "➕", fontSize = 20.sp) }
+                    ) { Text(text = if (isBookmarked) "🔖" else "➕", fontSize = toolbarIconFontSize) }
                 }
             }
         }
@@ -846,9 +931,9 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
-                .background(Color(0xFF2C2C2C))
+                .background(ThemeCardBg)
                 .navigationBarsPadding()
-                .padding(horizontal = 16.dp, vertical = 6.dp)
+                .padding(horizontal = if (isTablet) 32.dp else 16.dp, vertical = 6.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -865,7 +950,11 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                     value = pagerState.currentPage.toFloat(),
                     onValueChange = { scope.launch { pagerState.scrollToPage(it.toInt()) } },
                     valueRange = 0f..(if (viewModel.pageCount > 0) (viewModel.pageCount - 1).toFloat() else 0f),
-                    colors = SliderDefaults.colors(thumbColor = Color(0xFFE0E0E0), activeTrackColor = Color(0xFFE0E0E0)),
+                    colors = SliderDefaults.colors(
+                        thumbColor = ThemeGold,
+                        activeTrackColor = ThemeGoldLight,
+                        inactiveTrackColor = ThemeDarkBg
+                    ),
                     modifier = Modifier.weight(1f).height(24.dp)
                 )
             }
@@ -876,11 +965,11 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFA121212))
+                    .background(ThemeDarkBg.copy(alpha = 0.96f))
                     .zIndex(100f)
                     .clickable(enabled = false) {}
             ) {
-                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp).statusBarsPadding()) {
+                Column(modifier = Modifier.fillMaxSize().padding(horizontal = if (isTablet) 48.dp else 16.dp).statusBarsPadding()) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -891,7 +980,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                     }
 
                     LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
+                        columns = GridCells.Fixed(gridColumns),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                         modifier = Modifier.fillMaxSize().padding(bottom = 16.dp)
@@ -900,8 +989,9 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                             Box(
                                 modifier = Modifier
                                     .aspectRatio(0.7f)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.DarkGray)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(ThemeCardBg)
+                                    .border(1.dp, ThemeGold.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
                                     .clickable {
                                         scope.launch { pagerState.scrollToPage(pageIndex) }
                                         showPageOverview = false
@@ -933,11 +1023,11 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFA121212))
+                    .background(ThemeDarkBg.copy(alpha = 0.96f))
                     .zIndex(100f)
                     .clickable(enabled = false) {}
             ) {
-                Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp).statusBarsPadding()) {
+                Column(modifier = Modifier.fillMaxSize().padding(horizontal = if (isTablet) 48.dp else 16.dp).statusBarsPadding()) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -953,7 +1043,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                         }
                     } else {
                         LazyVerticalGrid(
-                            columns = GridCells.Fixed(2),
+                            columns = GridCells.Fixed(gridColumns),
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                             verticalArrangement = Arrangement.spacedBy(16.dp),
                             modifier = Modifier.fillMaxSize().padding(bottom = 16.dp)
@@ -962,8 +1052,9 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                 Box(
                                     modifier = Modifier
                                         .aspectRatio(0.7f)
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .background(Color.DarkGray)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(ThemeCardBg)
+                                        .border(1.dp, ThemeGold.copy(alpha = 0.5f), RoundedCornerShape(12.dp))
                                         .clickable {
                                             scope.launch { pagerState.scrollToPage(bookmarkedPage) }
                                             showBookmarksList = false
@@ -1019,7 +1110,6 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                     searchResults.add(p to snippet)
                                 }
                             }
-                            // CRITICAL MEMORY FIX: 15ms delay gives Android Garbage Collector time to free old page Bitmaps!
                             delay(15)
                         }
                         isSearching = false
@@ -1030,14 +1120,14 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color(0xFA121212))
+                    .background(ThemeDarkBg.copy(alpha = 0.96f))
                     .zIndex(100f)
                     .clickable(enabled = false) {}
             ) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(horizontal = 16.dp)
+                        .padding(horizontal = if (isTablet) 48.dp else 16.dp)
                         .statusBarsPadding()
                 ) {
                     Row(
@@ -1070,18 +1160,18 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                             keyboardActions = KeyboardActions(onSearch = { runSearch() }),
                             colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = Color(0xFFFFD700),
-                                unfocusedBorderColor = Color(0xFF3E3E46),
+                                focusedBorderColor = ThemeGold,
+                                unfocusedBorderColor = ThemeAccentBlue,
                                 focusedTextColor = Color.White,
                                 unfocusedTextColor = Color.White,
-                                cursorColor = Color(0xFFFFD700)
+                                cursorColor = ThemeGold
                             ),
                             modifier = Modifier.weight(1f)
                         )
 
                         Button(
                             onClick = { runSearch() },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFD700)),
+                            colors = ButtonDefaults.buttonColors(containerColor = ThemeGold),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.height(54.dp)
                         ) {
@@ -1096,8 +1186,8 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                         ) {
                             LinearProgressIndicator(
                                 progress = searchProgress,
-                                color = Color(0xFFFFD700),
-                                trackColor = Color(0xFF2A2A30),
+                                color = ThemeGold,
+                                trackColor = ThemeCardBg,
                                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
                             )
                             Row(
@@ -1142,8 +1232,8 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clip(RoundedCornerShape(16.dp))
-                                        .background(Color(0xFF2A2A30))
-                                        .border(1.dp, Color(0xFF3E3E46), RoundedCornerShape(16.dp))
+                                        .background(ThemeCardBg)
+                                        .border(1.dp, ThemeGold.copy(alpha = 0.3f), RoundedCornerShape(16.dp))
                                         .clickable {
                                             scope.launch { pagerState.scrollToPage(resultPage) }
                                             isSearching = false
@@ -1161,17 +1251,17 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                         Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(6.dp))
-                                                .background(Color(0xFF6200EE))
+                                                .background(ThemeGold)
                                                 .padding(horizontal = 10.dp, vertical = 4.dp)
                                         ) {
                                             Text(
                                                 text = "Page ${resultPage + 1}",
-                                                color = Color.White,
+                                                color = Color.Black,
                                                 fontSize = 12.sp,
                                                 fontWeight = FontWeight.Bold
                                             )
                                         }
-                                        Text("Teleport ➡️", color = Color(0xFFFFD700), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        Text("Teleport ➡️", color = ThemeGoldLight, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                     }
 
                                     Text(
@@ -1188,154 +1278,381 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
             }
         }
 
-        // --- 8. MODERN PRO SETTINGS MODAL DASHBOARD ---
+        // --- 8. MODERN SLIDING SETTINGS MODAL DASHBOARD ---
         if (showSettingsDialog) {
+            val settingsPagerState = rememberPagerState(pageCount = { 2 })
+
             Dialog(onDismissRequest = { showSettingsDialog = false }) {
                 Surface(
                     shape = RoundedCornerShape(24.dp),
-                    color = Color(0xFF1E1E22),
+                    color = ThemeDarkBg,
                     tonalElevation = 8.dp,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp)
+                    modifier = Modifier.widthIn(max = dialogMaxWidth).fillMaxWidth().padding(horizontal = 4.dp)
                 ) {
-                    Column(
-                        modifier = Modifier.padding(20.dp),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        // Dialog Header
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Reader Settings", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Text("⚙️", fontSize = 22.sp)
+                                Text("Settings", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                            }
                             Box(
                                 modifier = Modifier
                                     .size(32.dp)
                                     .clip(CircleShape)
-                                    .background(Color(0xFF2A2A30))
+                                    .background(ThemeCardBg)
                                     .clickable { showSettingsDialog = false },
                                 contentAlignment = Alignment.Center
                             ) { Text("✕", fontSize = 14.sp, color = Color.LightGray) }
                         }
 
-                        Column(
+                        // Sliding Segmented Tab Row
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clip(RoundedCornerShape(16.dp))
-                                .background(Color(0xFF2A2A30))
-                                .padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(ThemeCardBg)
+                                .padding(4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                    Text("🌧️", fontSize = 24.sp)
-                                    Column {
-                                        Text("Ambient Rain", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                        Text("Soothing background audio", color = Color.Gray, fontSize = 12.sp)
-                                    }
-                                }
-                                Switch(
-                                    checked = isRainPlaying,
-                                    onCheckedChange = { isRainPlaying = it },
-                                    colors = SwitchDefaults.colors(
-                                        checkedThumbColor = Color(0xFFFFD700),
-                                        checkedTrackColor = Color(0xFF6200EE)
-                                    )
-                                )
-                            }
-
-                            AnimatedVisibility(visible = isRainPlaying) {
-                                Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text("Volume", color = Color.LightGray, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                        Text("${(rainVolume * 100).toInt()}%", color = Color(0xFFFFD700), fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                    Slider(
-                                        value = rainVolume,
-                                        onValueChange = { rainVolume = it },
-                                        valueRange = 0f..1f,
-                                        colors = SliderDefaults.colors(
-                                            thumbColor = Color(0xFFFFD700),
-                                            activeTrackColor = Color(0xFF6200EE),
-                                            inactiveTrackColor = Color(0xFF3E3E46)
-                                        )
+                            val tabTitles = listOf("📖 Reader", "ℹ️ About & Social")
+                            tabTitles.forEachIndexed { index, title ->
+                                val isSelected = settingsPagerState.currentPage == index
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(if (isSelected) ThemeGold else Color.Transparent)
+                                        .clickable { scope.launch { settingsPagerState.animateScrollToPage(index) } }
+                                        .padding(vertical = 10.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = title,
+                                        color = if (isSelected) Color.Black else Color(0xFFA9B7C6),
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                        fontSize = 13.sp
                                     )
                                 }
                             }
                         }
 
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text("PAGE TEXTURE", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Spacer(modifier = Modifier.height(16.dp))
 
-                            Button(
-                                onClick = { galleryLauncher.launch("image/*") },
-                                modifier = Modifier.fillMaxWidth().height(48.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = if (currentPageStyle == PageStyle.CUSTOM) Color(0xFF6200EE) else Color(0xFF2A2A30)),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Row(
+                        // Sliding Pages Content
+                        HorizontalPager(
+                            state = settingsPagerState,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { pageIndex ->
+                            if (pageIndex == 0) {
+                                // --- PAGE 0: READER SETTINGS ---
+                                Column(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
                                 ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text("🖼️", fontSize = 18.sp)
-                                        Text("Choose from Gallery...", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
-                                    }
-                                    if (currentPageStyle == PageStyle.CUSTOM) {
-                                        Text("✔ Active", color = Color(0xFFFFD700), fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                                    }
-                                }
-                            }
-
-                            val presets = PageStyle.values().filter { it != PageStyle.CUSTOM }
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                presets.chunked(2).forEach { rowStyles ->
-                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        rowStyles.forEach { style ->
-                                            val isSelected = currentPageStyle == style
-                                            Box(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .height(48.dp)
-                                                    .clip(RoundedCornerShape(12.dp))
-                                                    .background(if (isSelected) Color(0xFF383842) else Color(0xFF2A2A30))
-                                                    .border(
-                                                        width = if (isSelected) 2.dp else 1.dp,
-                                                        color = if (isSelected) Color(0xFFFFD700) else Color.Transparent,
-                                                        shape = RoundedCornerShape(12.dp)
-                                                    )
-                                                    .clickable { currentPageStyle = style }
-                                                    .padding(horizontal = 12.dp),
-                                                contentAlignment = Alignment.CenterStart
-                                            ) {
-                                                Row(
-                                                    verticalAlignment = Alignment.CenterVertically,
-                                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                                                ) {
-                                                    Box(
-                                                        modifier = Modifier
-                                                            .size(20.dp)
-                                                            .clip(CircleShape)
-                                                            .background(if (style.drawableRes != null) Color(0xFFD7CCC8) else style.color)
-                                                            .border(1.dp, Color.Gray, CircleShape)
-                                                    )
-                                                    Text(
-                                                        text = style.label,
-                                                        color = if (isSelected) Color.White else Color.LightGray,
-                                                        fontSize = 13.sp,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                        maxLines = 1
-                                                    )
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(RoundedCornerShape(16.dp))
+                                            .background(ThemeCardBg)
+                                            .padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                                Text("🌧️", fontSize = 24.sp)
+                                                Column {
+                                                    Text("Ambient Rain", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                                    Text("Soothing background audio", color = Color(0xFFA9B7C6), fontSize = 12.sp)
                                                 }
                                             }
+                                            Switch(
+                                                checked = isRainPlaying,
+                                                onCheckedChange = { isRainPlaying = it },
+                                                colors = SwitchDefaults.colors(
+                                                    checkedThumbColor = ThemeGold,
+                                                    checkedTrackColor = ThemeAccentBlue
+                                                )
+                                            )
+                                        }
+
+                                        AnimatedVisibility(visible = isRainPlaying) {
+                                            Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                                    verticalAlignment = Alignment.CenterVertically
+                                                ) {
+                                                    Text("Volume", color = Color(0xFFA9B7C6), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                                    Text("${(rainVolume * 100).toInt()}%", color = ThemeGold, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                                Slider(
+                                                    value = rainVolume,
+                                                    onValueChange = { rainVolume = it },
+                                                    valueRange = 0f..1f,
+                                                    colors = SliderDefaults.colors(
+                                                        thumbColor = ThemeGold,
+                                                        activeTrackColor = ThemeGoldLight,
+                                                        inactiveTrackColor = ThemeDarkBg
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    }
+
+                                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text("PAGE TEXTURE", color = Color(0xFFA9B7C6), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+
+                                        Button(
+                                            onClick = { galleryLauncher.launch("image/*") },
+                                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                                            colors = ButtonDefaults.buttonColors(containerColor = if (currentPageStyle == PageStyle.CUSTOM) ThemeGold else ThemeCardBg),
+                                            shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                                    Text("🖼️", fontSize = 18.sp)
+                                                    Text("Choose from Gallery...", color = if (currentPageStyle == PageStyle.CUSTOM) Color.Black else Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                                                }
+                                                if (currentPageStyle == PageStyle.CUSTOM) {
+                                                    Text("✔ Active", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                                }
+                                            }
+                                        }
+
+                                        val presets = PageStyle.values().filter { it != PageStyle.CUSTOM }
+                                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            presets.chunked(2).forEach { rowStyles ->
+                                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                                    rowStyles.forEach { style ->
+                                                        val isSelected = currentPageStyle == style
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .weight(1f)
+                                                                .height(48.dp)
+                                                                .clip(RoundedCornerShape(12.dp))
+                                                                .background(if (isSelected) ThemeGold.copy(alpha = 0.2f) else ThemeCardBg)
+                                                                .border(
+                                                                    width = if (isSelected) 2.dp else 1.dp,
+                                                                    color = if (isSelected) ThemeGold else Color.Transparent,
+                                                                    shape = RoundedCornerShape(12.dp)
+                                                                )
+                                                                .clickable { currentPageStyle = style }
+                                                                .padding(horizontal = 12.dp),
+                                                            contentAlignment = Alignment.CenterStart
+                                                        ) {
+                                                            Row(
+                                                                verticalAlignment = Alignment.CenterVertically,
+                                                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                                            ) {
+                                                                Box(
+                                                                    modifier = Modifier
+                                                                        .size(20.dp)
+                                                                        .clip(CircleShape)
+                                                                        .background(if (style.drawableRes != null) Color(0xFFD7CCC8) else style.color)
+                                                                        .border(1.dp, Color.Gray, CircleShape)
+                                                                )
+                                                                Text(
+                                                                    text = style.label,
+                                                                    color = if (isSelected) ThemeGoldLight else Color(0xFFA9B7C6),
+                                                                    fontSize = 13.sp,
+                                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                                                    maxLines = 1
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                // --- PAGE 1: ABOUT & SOCIAL SETTINGS ---
+                                LazyColumn(
+                                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    // SECTION 1: ABOUT
+                                    item {
+                                        Text("About", color = Color(0xFFA9B7C6), fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp))
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(16.dp))
+                                                .background(ThemeCardBg)
+                                        ) {
+                                            // 1. Invite friends
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        val sendIntent = Intent().apply {
+                                                            action = Intent.ACTION_SEND
+                                                            putExtra(Intent.EXTRA_TEXT, "Check out this amazing PDF Book Reader App!" +
+                                                                    "https://github.com/SanjeevKumar-24/BOOKL1")
+                                                            type = "text/plain"
+                                                        }
+                                                        context.startActivity(Intent.createChooser(sendIntent, "Invite friends via"))
+                                                    }
+                                                    .padding(16.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                            ) {
+                                                Text("🔗", fontSize = 20.sp)
+                                                Text("Invite friends to the app", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                            }
+
+                                            Divider(color = ThemeDarkBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
+
+                                            // 2. More Apps
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        val url = "https://play.google.com/store"
+                                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                                    }
+                                                    .padding(16.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                            ) {
+
+                                                Text("::: ", color = ThemeGoldLight, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                                                Text("More Apps", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                            }
+
+                                            Divider(color = ThemeDarkBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
+
+                                            // 3. Send feedback
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
+                                                            data = Uri.parse("mailto:sjv.apps@gmail.com?subject=App%20Feedback")
+                                                        }
+                                                        try { context.startActivity(emailIntent) } catch (e: Exception) {}
+                                                    }
+                                                    .padding(16.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                            ) {
+                                                Text("💬", fontSize = 20.sp)
+                                                Text("Send feedback", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                            }
+
+                                            Divider(color = ThemeDarkBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
+
+
+
+                                            // 5. Version
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(16.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                            ) {
+                                                Text("< >", color = ThemeGoldLight, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                                                Column {
+                                                    Text("Version", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                                    Text("Book Reader Pro 1.0.0", color = Color(0xFFA9B7C6), fontSize = 13.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // SECTION 2: FOLLOW US
+                                    item {
+                                        Text("Follow us", color = Color(0xFFA9B7C6), fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp))
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(16.dp))
+                                                .background(ThemeCardBg)
+                                        ) {
+                                            // 1. LinkedIn
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.linkedin.com/in/sanjeev-kumar-6b7742379?utm_source=share_via&utm_content=profile&utm_medium=member_android")))
+                                                    }
+                                                    .padding(16.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                            ) {
+                                                Text("💼", fontSize = 20.sp)
+                                                Text("LinkedIn", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                            }
+
+                                            Divider(color = ThemeDarkBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
+
+                                            // 2. GitHub
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/SanjeevKumar-24")))
+                                                    }
+                                                    .padding(16.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                            ) {
+                                                Text("🐙", fontSize = 20.sp)
+                                                Text("GitHub", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                            }
+
+                                            Divider(color = ThemeDarkBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
+
+                                            // 3. Instagram
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .clickable {
+                                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.instagram.com/sanjeeveram?igsh=emtuYmJjcGRiM283")))
+                                                    }
+                                                    .padding(16.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                            ) {
+                                                Text("📸", fontSize = 20.sp)
+                                                Text("Instagram", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                            }
+                                        }
+                                    }
+
+                                    // SECTION 3: FOOTER BRANDING
+                                    item {
+                                        Column(
+                                            modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp),
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(48.dp)
+                                                    .clip(CircleShape)
+                                                    .background(Color(0xFF1E1E1E))
+                                                    .border(2.dp, ThemeGold, CircleShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Text("👑", fontSize = 24.sp)
+                                            }
+                                            Text("#SJV_AndroidApps", color = Color(0xFFA9B7C6), fontSize = 12.sp, fontWeight = FontWeight.Medium)
                                         }
                                     }
                                 }
