@@ -13,8 +13,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import java.io.File
-import java.io.FileOutputStream
 
 class MainActivity : ComponentActivity() {
 
@@ -23,13 +21,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-
-        val samplePdf = copyAssetToCache("sample.pdf")
-
-        if (samplePdf != null) {
-            ActiveBook.fileName = samplePdf.name
-            viewModel.openBook(samplePdf)
-        }
 
         setContent {
             MaterialTheme {
@@ -41,8 +32,9 @@ class MainActivity : ComponentActivity() {
 
                     when (currentScreen) {
                         "SPLASH" -> {
-                            VideoSplashScreen(
-                                onSplashFinished = {
+                            // FIXED: Matches fun SplashScreen(onTimeout = { ... })
+                            SplashScreen(
+                                onTimeout = {
                                     currentScreen = "LIBRARY"
                                 }
                             )
@@ -50,7 +42,7 @@ class MainActivity : ComponentActivity() {
                         "LIBRARY" -> {
                             LibraryScreen(
                                 onBookSelected = { selectedFile ->
-                                    // THE CRITICAL FIX: Set the unique file name before opening!
+                                    // Set the unique file name before opening the book
                                     ActiveBook.fileName = selectedFile.name
                                     viewModel.openBook(selectedFile)
                                     currentScreen = "BOOK"
@@ -68,23 +60,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-        }
-    }
-
-    private fun copyAssetToCache(fileName: String): File? {
-        return try {
-            val cacheFile = File(cacheDir, fileName)
-            if (!cacheFile.exists()) {
-                assets.open(fileName).use { inputStream ->
-                    FileOutputStream(cacheFile).use { outputStream ->
-                        inputStream.copyTo(outputStream)
-                    }
-                }
-            }
-            cacheFile
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
         }
     }
 }
