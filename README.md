@@ -10,7 +10,11 @@ An advanced, feature-rich, and highly customizable Android PDF Reader built enti
 </div>
 
 ---
+<a href="https://github.com/SanjeevKumar-24/Rustle-Book-L1/blob/master/LICENSE">
+  <img src="https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge" alt="License: GPL v3">
+</a>
 
+---
 ## 📱 App Preview & Interface
 
 <div align="center">
