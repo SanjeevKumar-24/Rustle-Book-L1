@@ -3,20 +3,24 @@ package com.example.bookl1
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.*
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import java.io.File
-import java.io.FileOutputStream
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 class MainActivity : ComponentActivity() {
 
@@ -26,7 +30,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // 1. Check if the app was launched from the "Open With" or "Share" drawer
+        // 1. Check if the app was launched from the "Open With" or "Share" system drawer
         val launchedUri: Uri? = when (intent?.action) {
             Intent.ACTION_VIEW -> intent.data
             Intent.ACTION_SEND -> {
@@ -40,16 +44,8 @@ class MainActivity : ComponentActivity() {
             else -> null
         }
 
-        // 2. If a URI exists, copy it to cache and prepare to open it directly!
-        var initialScreen = "SPLASH"
-        if (launchedUri != null) {
-            val fileFromUri = copyUriToCache(launchedUri)
-            if (fileFromUri != null) {
-                ActiveBook.fileName = fileFromUri.name
-                viewModel.openBook(fileFromUri)
-                initialScreen = "BOOK" // Skip splash and go straight to reading!
-            }
-        }
+        // 2. If launched with a PDF URI, start on "LOADING" screen. Otherwise, start on "SPLASH".
+        val initialScreen = if (launchedUri != null) "LOADING" else "SPLASH"
 
         setContent {
             MaterialTheme {
@@ -57,8 +53,21 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    // Start on "BOOK" if opened via drawer, otherwise start on "SPLASH"
                     var currentScreen by remember { mutableStateOf(initialScreen) }
+
+                    // 3. Trigger the background import when starting on the LOADING screen
+                    LaunchedEffect(launchedUri) {
+                        if (launchedUri != null && currentScreen == "LOADING") {
+                            viewModel.importAndOpenUri(this@MainActivity, launchedUri) { success ->
+                                if (success) {
+                                    currentScreen = "BOOK"
+                                } else {
+                                    Toast.makeText(this@MainActivity, "Failed to open PDF file", Toast.LENGTH_SHORT).show()
+                                    currentScreen = "LIBRARY"
+                                }
+                            }
+                        }
+                    }
 
                     when (currentScreen) {
                         "SPLASH" -> {
@@ -67,6 +76,38 @@ class MainActivity : ComponentActivity() {
                                     currentScreen = "LIBRARY"
                                 }
                             )
+                        }
+                        "LOADING" -> {
+                            // Branded Rustle Loading Screen for massive PDFs
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(ThemeDarkBg),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        color = ThemeGold,
+                                        trackColor = ThemeCardBg,
+                                        modifier = Modifier.size(56.dp),
+                                        strokeWidth = 5.dp
+                                    )
+                                    Text(
+                                        text = "Importing Book...",
+                                        color = Color.White,
+                                        fontSize = 18.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Preparing high-resolution pages",
+                                        color = Color(0xFFA9B7C6),
+                                        fontSize = 14.sp
+                                    )
+                                }
+                            }
                         }
                         "LIBRARY" -> {
                             LibraryScreen(
@@ -88,33 +129,6 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-        }
-    }
-
-    // Helper: Converts a shared WhatsApp/Drive content:// URI into a readable local file
-    private fun copyUriToCache(uri: Uri): File? {
-        return try {
-            // Get original file name or fall back to timestamp
-            var fileName = "shared_${System.currentTimeMillis()}.pdf"
-            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    if (nameIndex != -1) {
-                        fileName = cursor.getString(nameIndex)
-                    }
-                }
-            }
-
-            val cacheFile = File(cacheDir, fileName)
-            contentResolver.openInputStream(uri)?.use { inputStream ->
-                FileOutputStream(cacheFile).use { outputStream ->
-                    inputStream.copyTo(outputStream)
-                }
-            }
-            cacheFile
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
         }
     }
 }
