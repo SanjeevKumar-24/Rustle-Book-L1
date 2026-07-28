@@ -1,4 +1,4 @@
-# 👑 Rustle (RUSTK) — Timeless PDF Book Reader & Annotator
+# 👑 Rustle — Timeless PDF Book Reader & Annotator
 
 An advanced, feature-rich, and highly customizable Android PDF Reader built entirely with **Jetpack Compose**. Designed for readers, students, and professionals who crave an immersive reading experience, **Rustle** blends elegant dark-mode aesthetics with powerful productivity tools like AI-powered OCR text scanning, interactive drawing tools, custom page textures, and ambient background audio.
 
