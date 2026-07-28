@@ -24,11 +24,19 @@ android {
 
     buildTypes {
         release {
-            optimization {
-                enable = false
-            }
+            // 1. Enables R8 to strip out dead code and shrink classes
+            isMinifyEnabled = true
+
+            // 2. Automatically deletes unused images, layouts, and XML files
+            isShrinkResources = true
+
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -40,7 +48,7 @@ android {
 
 dependencies {
     implementation("androidx.compose.material:material-icons-extended")
-    implementation("com.google.mlkit:text-recognition:16.0.0")
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.0")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.activity.ktx)
