@@ -1,5 +1,7 @@
 package com.example.bookl1
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,6 +15,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import java.io.File
+import java.io.FileOutputStream
 
 class MainActivity : ComponentActivity() {
 
@@ -22,17 +26,42 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // 1. Check if the app was launched from the "Open With" or "Share" drawer
+        val launchedUri: Uri? = when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                }
+            }
+            else -> null
+        }
+
+        // 2. If a URI exists, copy it to cache and prepare to open it directly!
+        var initialScreen = "SPLASH"
+        if (launchedUri != null) {
+            val fileFromUri = copyUriToCache(launchedUri)
+            if (fileFromUri != null) {
+                ActiveBook.fileName = fileFromUri.name
+                viewModel.openBook(fileFromUri)
+                initialScreen = "BOOK" // Skip splash and go straight to reading!
+            }
+        }
+
         setContent {
             MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    var currentScreen by remember { mutableStateOf("SPLASH") }
+                    // Start on "BOOK" if opened via drawer, otherwise start on "SPLASH"
+                    var currentScreen by remember { mutableStateOf(initialScreen) }
 
                     when (currentScreen) {
                         "SPLASH" -> {
-                            // FIXED: Matches fun SplashScreen(onTimeout = { ... })
                             SplashScreen(
                                 onTimeout = {
                                     currentScreen = "LIBRARY"
@@ -42,7 +71,6 @@ class MainActivity : ComponentActivity() {
                         "LIBRARY" -> {
                             LibraryScreen(
                                 onBookSelected = { selectedFile ->
-                                    // Set the unique file name before opening the book
                                     ActiveBook.fileName = selectedFile.name
                                     viewModel.openBook(selectedFile)
                                     currentScreen = "BOOK"
@@ -60,6 +88,33 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    // Helper: Converts a shared WhatsApp/Drive content:// URI into a readable local file
+    private fun copyUriToCache(uri: Uri): File? {
+        return try {
+            // Get original file name or fall back to timestamp
+            var fileName = "shared_${System.currentTimeMillis()}.pdf"
+            contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex != -1) {
+                        fileName = cursor.getString(nameIndex)
+                    }
+                }
+            }
+
+            val cacheFile = File(cacheDir, fileName)
+            contentResolver.openInputStream(uri)?.use { inputStream ->
+                FileOutputStream(cacheFile).use { outputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            }
+            cacheFile
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
         }
     }
 }

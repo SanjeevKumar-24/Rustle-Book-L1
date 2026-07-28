@@ -22,10 +22,29 @@
             android:windowSoftInputMode="adjustResize"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"> <!-- CRITICAL FIX: Stops app restart on screen rotation! -->
 
+            <!-- Existing Launcher filter (Keeps app icon on home screen) -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- NEW: Makes app appear in "Open With" menu for PDFs (WhatsApp, Drive, My Files) -->
+            <intent-filter android:label="Open with Rustle">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+
+            <!-- NEW: Makes app appear in the "Share" menu for PDFs -->
+            <intent-filter android:label="Read in Rustle">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/pdf" />
+            </intent-filter>
+
         </activity>
     </application>
 
