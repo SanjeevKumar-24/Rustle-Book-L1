@@ -3,23 +3,18 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
-
 android {
     namespace = "com.example.bookl1"
-    compileSdk {
-        version = release(37) {
-            minorApiLevel = 1
-        }
-    }
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.example.bookl1"
         minSdk = 24
-        targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        targetSdk = 35
+        versionCode = 2
+        versionName = "1.0.1"
 
-        // ✅ ADD THIS: Excludes heavy x86/x86_64 emulator OCR binaries from the APK
+        // Excludes heavy x86/x86_64 emulator OCR binaries from the APK
         ndk {
             abiFilters.addAll(setOf("arm64-v8a", "armeabi-v7a"))
         }
@@ -27,12 +22,8 @@ android {
 
     buildTypes {
         release {
-            // 1. Enables R8 to strip out dead code and shrink classes
             isMinifyEnabled = true
-
-            // 2. Automatically deletes unused images, layouts, and XML files
             isShrinkResources = true
-
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -51,7 +42,7 @@ android {
 
 dependencies {
     implementation("androidx.compose.material:material-icons-extended")
-    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.0")
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.activity.ktx)
@@ -68,5 +59,4 @@ dependencies {
     androidTestImplementation(libs.androidx.junit)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
-
 }
