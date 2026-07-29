@@ -54,23 +54,36 @@ class PdfViewModel : ViewModel() {
 
     private fun copyUriToCache(context: Context, uri: Uri): File? {
         return try {
-            var fileName = "shared_${System.currentTimeMillis()}.pdf"
+            var fileName = "WhatsApp_Book_${System.currentTimeMillis()}.pdf"
+
             context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
                 if (cursor.moveToFirst()) {
                     val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                     if (nameIndex != -1) {
-                        fileName = cursor.getString(nameIndex)
+                        val rawName = cursor.getString(nameIndex)
+                        if (!rawName.isNullOrBlank()) {
+                            // Clean out symbols that break Android file storage
+                            fileName = rawName.replace("[\\\\/:*?\"<>|]".toRegex(), "_")
+                        }
                     }
                 }
             }
 
-            val cacheFile = File(context.cacheDir, fileName)
+            // ✅ CRITICAL FIX: WhatsApp often sends names without ".pdf" at the end!
+            // This guarantees your LibraryScreen will see and display the file.
+            if (!fileName.lowercase().endsWith(".pdf")) {
+                fileName += ".pdf"
+            }
+
+            // Save permanently into your app's Library folder
+            val savedFile = File(context.filesDir, fileName)
+
             context.contentResolver.openInputStream(uri)?.use { inputStream ->
-                FileOutputStream(cacheFile).use { outputStream ->
+                FileOutputStream(savedFile).use { outputStream ->
                     inputStream.copyTo(outputStream)
                 }
             }
-            cacheFile
+            savedFile
         } catch (e: Exception) {
             e.printStackTrace()
             null

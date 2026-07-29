@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.net.Uri
 import android.speech.tts.TextToSpeech
@@ -316,35 +317,51 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     var showScannerDialog by remember { mutableStateOf(false) }
     var scannedTextResult by remember { mutableStateOf("Scanning...") }
 
-    // --- AUDIO ENGINES ---
-    val rainPlayer = remember {
-        try {
-            MediaPlayer.create(context, R.raw.rain)?.apply { isLooping = true }
-        } catch (e: Exception) { null }
-    }
-
+    // --- 9. LIFECYCLE-SAFE RAIN & PAGE-FLIP AUDIO ENGINES (LINES 228-282 FIXED HERE) ---
     val pageFlipPlayer = remember {
         try {
             MediaPlayer.create(context, R.raw.page_flip)
         } catch (e: Exception) { null }
     }
 
-    LaunchedEffect(isRainPlaying, rainVolume) {
+    // 1. Create ONE persistent MediaPlayer for the entire reader screen
+    val rainPlayer = remember {
         try {
-            if (isRainPlaying) {
-                val scaledVolume = rainVolume * 0.45f
-                rainPlayer?.setVolume(scaledVolume, scaledVolume)
-                if (rainPlayer?.isPlaying != true) {
-                    rainPlayer?.start()
-                }
-            } else {
-                if (rainPlayer?.isPlaying == true) {
-                    rainPlayer.pause()
-                }
+            MediaPlayer.create(context, R.raw.rain)?.apply {
+                isLooping = true
             }
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) {
+            null
+        }
     }
 
+    // 2. Control playback and volume instantly when you toggle the Settings switch
+    LaunchedEffect(isRainPlaying, rainVolume) {
+        if (rainPlayer == null && isRainPlaying) {
+            Toast.makeText(
+                context,
+                "Cannot play: res/raw/rain.mp3 is corrupt or not a valid MP3 file",
+                Toast.LENGTH_LONG
+            ).show()
+        } else {
+            try {
+                rainPlayer?.setVolume(rainVolume, rainVolume)
+                if (isRainPlaying) {
+                    if (rainPlayer?.isPlaying == false) {
+                        rainPlayer.start()
+                    }
+                } else {
+                    if (rainPlayer?.isPlaying == true) {
+                        rainPlayer.pause()
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    // 3. Stop and release audio hardware only when closing BookScreen completely
     DisposableEffect(Unit) {
         onDispose {
             try {
@@ -352,7 +369,9 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                 rainPlayer?.release()
                 if (pageFlipPlayer?.isPlaying == true) pageFlipPlayer.stop()
                 pageFlipPlayer?.release()
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
@@ -488,7 +507,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                                             }
                                                             scannedTextResult = extracted.trim().ifEmpty { "No text found inside the circle." }
                                                         }
-                                                        .addOnFailureListener { e ->
+                                                        .addOnFailureListener { _ ->
                                                             scannedTextResult = "Error scanning text."
                                                         }
 
@@ -818,7 +837,6 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // REDUCED SPACING: Changed from 24.dp to 16.dp on phones so all icons fit without clipping!
                     Row(horizontalArrangement = Arrangement.spacedBy(if (isTablet) 28.dp else 16.dp)) {
                         Text(text = "⬅️", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { onBackClicked() })
                         Text(text = "🔲", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { showPageOverview = true })
@@ -833,7 +851,6 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                         )
                         Text(text = "🔍", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { showSearchDialog = true })
                         Text(text = "⚙️", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { showSettingsDialog = true })
-                        // CHANGED TO TOOLBOX EMOJI (🧰) AND ADDED EXPLICIT WHITE COLOR:
                         Text(text = "🧰", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { isToolbarVisible = !isToolbarVisible })
                     }
                 }

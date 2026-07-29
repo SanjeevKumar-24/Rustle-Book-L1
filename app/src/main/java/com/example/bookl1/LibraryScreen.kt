@@ -61,7 +61,11 @@ fun getRealFileName(context: Context, uri: Uri): String {
     if (result == null) {
         result = uri.path?.let { File(it).name }
     }
-    return result ?: "document_${System.currentTimeMillis()}.pdf"
+    var cleanedName = result ?: "document_${System.currentTimeMillis()}.pdf"
+    if (!cleanedName.lowercase().endsWith(".pdf")) {
+        cleanedName += ".pdf"
+    }
+    return cleanedName
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -72,10 +76,12 @@ fun LibraryScreen(onBookSelected: (File) -> Unit) {
     var localFiles by remember { mutableStateOf<List<File>>(emptyList()) }
     var fileToDelete by remember { mutableStateOf<File?>(null) }
 
-    // Sorts files by most recent timestamp
+    // Sorts files by most recent timestamp from internal filesDir
     val loadFiles = {
-        val cacheFiles = context.cacheDir.listFiles { _, name -> name.endsWith(".pdf") }?.toList() ?: emptyList()
-        localFiles = cacheFiles.sortedByDescending { it.lastModified() }
+        val files = context.filesDir.listFiles { _, name ->
+            name.lowercase().endsWith(".pdf") && !name.equals("default.pdf", ignoreCase = true)
+        }?.toList() ?: emptyList()
+        localFiles = files.sortedByDescending { it.lastModified() }
     }
 
     LaunchedEffect(Unit) { loadFiles() }
@@ -85,18 +91,18 @@ fun LibraryScreen(onBookSelected: (File) -> Unit) {
     ) { uri: Uri? ->
         uri?.let { selectedUri ->
             val realName = getRealFileName(context, selectedUri)
-            val tempFile = File(context.cacheDir, realName)
+            val destFile = File(context.filesDir, realName)
 
             context.contentResolver.openInputStream(selectedUri)?.use { input ->
-                tempFile.outputStream().use { output ->
+                destFile.outputStream().use { output ->
                     input.copyTo(output)
                 }
             }
 
             // Mark as freshly opened
-            tempFile.setLastModified(System.currentTimeMillis())
+            destFile.setLastModified(System.currentTimeMillis())
             loadFiles()
-            onBookSelected(tempFile)
+            onBookSelected(destFile)
         }
     }
 

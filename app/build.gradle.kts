@@ -14,12 +14,15 @@ android {
 
     defaultConfig {
         applicationId = "com.example.bookl1"
-        minSdk = 26
-        targetSdk = 36
+        minSdk = 24
+        targetSdk = 34
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // ✅ ADD THIS: Excludes heavy x86/x86_64 emulator OCR binaries from the APK
+        ndk {
+            abiFilters.addAll(setOf("arm64-v8a", "armeabi-v7a"))
+        }
     }
 
     buildTypes {
