@@ -10,6 +10,47 @@ An advanced, feature-rich, and highly customizable Android PDF Reader built enti
 </div>
 
 ---
+<a href="https://github.com/SanjeevKumar-24/Rustle-Book-L1/blob/master/LICENSE">
+  <img src="https://img.shields.io/badge/License-GPLv3-blue.svg?style=for-the-badge" alt="License: GPL v3">
+</a>
+
+---
+## 📱 App Preview & Interface
+
+<div align="center">
+  <table>
+    <tr>
+      <td align="center">
+        <b>🎬 SPLASH & CREATOR</b><br><br>
+        <img src="https://github.com/user-attachments/assets/856fa9b1-ce69-4539-99d7-0b7a3f5443a5" width="300" alt="Splash Screen" />
+      </td>
+      <td align="center">
+        <b>📚 MAIN LIBRARY</b><br><br>
+        <img src="https://github.com/user-attachments/assets/9f2a260b-5673-4b16-ae4a-05668d95117e" width="300" alt="Main Library" />
+      </td>
+      <td align="center">
+        <b>📂 OPEN WITH PDF</b><br><br>
+        <img src="https://github.com/user-attachments/assets/a7b102b8-1ae0-413b-ae89-230632725d1e" width="300" alt="Open With PDF" />
+      </td>
+    </tr>
+    <tr>
+      <td align="center">
+        <b>🎨 CUSTOM THEMES</b><br><br>
+        <img src="https://github.com/user-attachments/assets/0fd5aaf0-333d-4d44-8f17-f143f19e14bf" width="300" alt="Custom Themes" />
+      </td>
+      <td align="center">
+        <b>🖊️ DRAWING TOOLBOX</b><br><br>
+        <img src="https://github.com/user-attachments/assets/5d1d1abe-de31-4c27-97cb-7e873ec4760f" width="300" alt="Drawing Toolbox" />
+      </td>
+      <td align="center">
+        <b>⭕ OCR AI SCANNER</b><br><br>
+        <img src="https://github.com/user-attachments/assets/6237366f-8f67-4cbc-9d45-cd0ca7cbbced" width="300" alt="AI Scanner" />
+      </td>
+    </tr>
+  </table>
+</div>
+
+---
 
 ## ✨ Why Rustle is Different
 
@@ -82,18 +123,3 @@ Access a floating, draggable toolbox (`🧰`) that can be repositioned anywhere 
    ```bash
    git clone [https://github.com/SanjeevKumar-24/BOOKL1.git](https://github.com/SanjeevKumar-24/BOOKL1.git)
    cd BOOKL1
-
-   
-👤 Author & Connect
-Sanjeev Kumar (SJV)
-
-Passionate Android Developer & Independent Author
-
-GitHub: @SanjeevKumar-24
-
-LinkedIn: Sanjeev Kumar
-
-Instagram: @sanjeeveram
-
-Feedback & Support: Sanjeevkumarmaner90@gmail.com
-   
