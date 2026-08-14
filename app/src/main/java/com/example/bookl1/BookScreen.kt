@@ -53,7 +53,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.HourglassEmpty
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
@@ -171,7 +170,8 @@ fun saveAnnotations(context: Context, strokes: Map<Int, List<DrawStroke>>, notes
     val sStrokes = HashMap<Int, List<SavedStroke>>()
     strokes.forEach { (page, list) ->
         sStrokes[page] = list.map {
-            val toolStr = "${it.tool.name}_${it.color.value.toLong()}"
+            // FIX: Save correctly as ULong string to prevent negative parsing crashes
+            val toolStr = "${it.tool.name}_${it.color.value.toString()}"
             SavedStroke(it.points.map { p -> p.x }, it.points.map { p -> p.y }, toolStr)
         }
     }
@@ -336,7 +336,9 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     var currentPenColor by remember { mutableStateOf(PenColors[0]) }
     var currentHighlightColor by remember { mutableStateOf(HighColors[0]) }
     var showColorPalette by remember { mutableStateOf(false) }
-    var isToolbarVisible by remember { mutableStateOf(true) }
+
+    // Toolbar visibility default is false so the floating pen shows immediately
+    var isToolbarVisible by remember { mutableStateOf(false) }
 
     var currentPageStyle by remember { mutableStateOf(PageStyle.TEXTURE_2) }
     var isRainPlaying by remember { mutableStateOf(false) }
@@ -464,24 +466,41 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
         }
     }
 
+    // FIX: Bulletproof parsing to handle corrupted/negative values from old saves
     LaunchedEffect(ActiveBook.fileName) {
         strokesMap.clear()
         redoStrokesMap.clear()
         notesMap.clear()
         bookmarks.clear()
-        loadAnnotations(context)?.let { saved ->
-            saved.strokes.forEach { (page, sList) ->
-                strokesMap[page] = sList.map {
-                    val parts = it.tool.split("_")
-                    val tool = Tool.valueOf(parts[0])
-                    val color = if (parts.size > 1) Color(parts[1].toULong()) else (if (tool == Tool.HIGHLIGHT) HighColors[0] else PenColors[0])
-                    DrawStroke(it.xs.zip(it.ys) { x, y -> Offset(x, y) }, tool, color)
-                }.toMutableList()
+
+        try {
+            loadAnnotations(context)?.let { saved ->
+                saved.strokes.forEach { (page, sList) ->
+                    val validStrokes = mutableListOf<DrawStroke>()
+                    sList.forEach { s ->
+                        try {
+                            val parts = s.tool.split("_")
+                            val tool = Tool.valueOf(parts[0])
+
+                            val colorStr = parts.getOrNull(1)
+                            val colorValue = colorStr?.toULongOrNull()
+                                ?: colorStr?.toLongOrNull()?.toULong()
+                                ?: (if (tool == Tool.HIGHLIGHT) HighColors[0].value else PenColors[0].value)
+
+                            validStrokes.add(DrawStroke(s.xs.zip(s.ys) { x, y -> Offset(x, y) }, tool, Color(colorValue)))
+                        } catch (e: Exception) {
+                            // Silently ignore corrupted strokes
+                        }
+                    }
+                    strokesMap[page] = validStrokes
+                }
+                saved.notes.forEach { (page, sList) ->
+                    notesMap[page] = sList.map { StickyNoteData(it.id, Offset(it.x, it.y), it.text) }.toMutableList()
+                }
+                bookmarks.addAll(saved.bookmarks)
             }
-            saved.notes.forEach { (page, sList) ->
-                notesMap[page] = sList.map { StickyNoteData(it.id, Offset(it.x, it.y), it.text) }.toMutableList()
-            }
-            bookmarks.addAll(saved.bookmarks)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -696,7 +715,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                                 }
                                             } while (event.changes.any { it.pressed })
 
-                                            // Toggle UI bars on quick single tap
+                                            // Toggle Main UI bars on quick single tap
                                             if (isTap && scale <= 1.05f) {
                                                 areUiBarsVisible = !areUiBarsVisible
                                                 showColorPalette = false
@@ -1030,54 +1049,68 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                             Text(text = "🔲", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { showPageOverview = true })
                             Text(text = "📑", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { showBookmarksList = true })
                         }
+
+                        // DYNAMIC TOP RIGHT ICONS
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(if (isTablet) 28.dp else 16.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            horizontalArrangement = Arrangement.spacedBy(if (isTablet) 24.dp else 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.horizontalScroll(rememberScrollState())
                         ) {
                             val pg = pagerState.currentPage
                             val canUndo = strokesMap[pg]?.isNotEmpty() == true
                             val canRedo = redoStrokesMap[pg]?.isNotEmpty() == true
 
-                            Text(
-                                text = "↶",
-                                fontSize = toolbarIconFontSize,
-                                color = if (canUndo) Color.White else Color.DarkGray,
-                                modifier = Modifier.clickable(enabled = canUndo) {
-                                    val list = strokesMap[pg]?.toMutableList() ?: mutableListOf()
-                                    if (list.isNotEmpty()) {
-                                        val last = list.removeAt(list.lastIndex)
-                                        strokesMap[pg] = list
-                                        val rList = redoStrokesMap[pg]?.toMutableList() ?: mutableListOf()
-                                        rList.add(last)
-                                        redoStrokesMap[pg] = rList
-                                        saveAnnotations(context, strokesMap, notesMap, bookmarks)
-                                    }
-                                }
-                            )
-
-                            Text(
-                                text = "↷",
-                                fontSize = toolbarIconFontSize,
-                                color = if (canRedo) Color.White else Color.DarkGray,
-                                modifier = Modifier.clickable(enabled = canRedo) {
-                                    val rList = redoStrokesMap[pg]?.toMutableList() ?: mutableListOf()
-                                    if (rList.isNotEmpty()) {
-                                        val last = rList.removeAt(rList.lastIndex)
-                                        redoStrokesMap[pg] = rList
+                            if (isToolbarVisible) {
+                                Text(
+                                    text = "↶",
+                                    fontSize = toolbarIconFontSize,
+                                    color = if (canUndo) Color.White else Color.DarkGray,
+                                    modifier = Modifier.clickable(enabled = canUndo) {
                                         val list = strokesMap[pg]?.toMutableList() ?: mutableListOf()
-                                        list.add(last)
-                                        strokesMap[pg] = list
-                                        saveAnnotations(context, strokesMap, notesMap, bookmarks)
+                                        if (list.isNotEmpty()) {
+                                            val last = list.removeAt(list.lastIndex)
+                                            strokesMap[pg] = list
+                                            val rList = redoStrokesMap[pg]?.toMutableList() ?: mutableListOf()
+                                            rList.add(last)
+                                            redoStrokesMap[pg] = rList
+                                            saveAnnotations(context, strokesMap, notesMap, bookmarks)
+                                        }
                                     }
-                                }
-                            )
+                                )
+
+                                Text(
+                                    text = "↷",
+                                    fontSize = toolbarIconFontSize,
+                                    color = if (canRedo) Color.White else Color.DarkGray,
+                                    modifier = Modifier.clickable(enabled = canRedo) {
+                                        val rList = redoStrokesMap[pg]?.toMutableList() ?: mutableListOf()
+                                        if (rList.isNotEmpty()) {
+                                            val last = rList.removeAt(rList.lastIndex)
+                                            redoStrokesMap[pg] = rList
+                                            val list = strokesMap[pg]?.toMutableList() ?: mutableListOf()
+                                            list.add(last)
+                                            strokesMap[pg] = list
+                                            saveAnnotations(context, strokesMap, notesMap, bookmarks)
+                                        }
+                                    }
+                                )
+                            } else {
+                                Text(text = "🔍", fontSize = toolbarIconFontSize, color = Color.White, modifier = Modifier.clickable { showSearchDialog = true })
+
+                                Text(
+                                    text = if (isReadingLoading) "⏳" else if (isSpeaking) "⏹️" else "🔊",
+                                    fontSize = toolbarIconFontSize,
+                                    color = if (isSpeaking) ThemeGold else Color.White,
+                                    modifier = Modifier.clickable { toggleReadAloud() }
+                                )
+                            }
 
                             Box {
-                                Icon(
-                                    imageVector = Icons.Default.MoreVert,
-                                    contentDescription = "Menu",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(28.dp).clickable { showAdvancedMenu = true }
+                                Text(
+                                    text = "⚙️",
+                                    fontSize = toolbarIconFontSize,
+                                    color = Color.White,
+                                    modifier = Modifier.clickable { showAdvancedMenu = true }
                                 )
                                 DropdownMenu(
                                     expanded = showAdvancedMenu,
@@ -1307,7 +1340,6 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
             FloatingActionButton(
                 onClick = {
                     isToolbarVisible = true
-                    areUiBarsVisible = true
                     currentTool = Tool.PEN // Re-open with pen selected
                 },
                 containerColor = ThemeCardBg,

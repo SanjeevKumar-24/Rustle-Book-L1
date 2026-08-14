@@ -73,24 +73,5 @@ fun SplashScreen(onTimeout: () -> Unit) {
                 .clickable(onClick = { onTimeout() })
         )
 
-        // --- LAYER 3: VISIBLE SKIP BUTTON ---
-        Box(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .statusBarsPadding()
-                .padding(16.dp)
-                .clip(RoundedCornerShape(20.dp))
-                .background(Color(0x801E1E1E))
-                .border(1.dp, Color(0xFFD4AF37), RoundedCornerShape(20.dp))
-                .clickable { onTimeout() }
-                .padding(horizontal = 14.dp, vertical = 6.dp)
-        ) {
-            Text(
-                text = "Skip ⏭️",
-                color = Color(0xFFD4AF37),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
-        }
-    }
+            }
 }
