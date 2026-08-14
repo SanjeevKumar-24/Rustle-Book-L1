@@ -35,6 +35,7 @@ import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -50,12 +51,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.HourglassEmpty
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -216,6 +217,8 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     val activity = context.getActivity()
     val scope = rememberCoroutineScope()
     val keyboardController = LocalSoftwareKeyboardController.current
+
+    @Suppress("DEPRECATION")
     val clipboardManager = LocalClipboardManager.current
     val configuration = LocalConfiguration.current
     val view = LocalView.current
@@ -233,7 +236,9 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     val toolbarIconFontSize = if (isTablet) 24.sp else 20.sp
 
     var areUiBarsVisible by remember { mutableStateOf(true) }
-    val showMainUi = areUiBarsVisible || !isLandscape
+
+    // UI Bars control (hides everywhere when toggled)
+    val showMainUi = areUiBarsVisible
 
     var scale by remember { mutableFloatStateOf(1f) }
     var offsetX by remember { mutableFloatStateOf(0f) }
@@ -258,79 +263,52 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
         }
     }
 
-    // --- 2. ACCELEROMETER SENSOR: 1 PAGE PER FLIP & HOLD TO ROTATE ---
+    // --- 2. ACCELEROMETER SENSOR: 1 PAGE PER FLIP (NO AUTO-ROTATE) ---
     DisposableEffect(context, isLandscape, isTiltToTurnEnabled) {
         val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         val accelerometer = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
 
         var lastTiltState = 0
-        var tiltStartTime = 0L
         var hasFlipped = false
-        var hasRotated = false
 
         val sensorListener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent?) {
-                if (event == null || viewModel.pageCount == 0) return
+                if (event == null || viewModel.pageCount == 0 || !isTiltToTurnEnabled) return
                 val xAxis = event.values[0]
-                val currentTime = System.currentTimeMillis()
 
                 // Neutral Zone (Phone held flat/normal) -> Resets the flip switch
                 if (xAxis in -3f..3f) {
                     lastTiltState = 0
-                    tiltStartTime = 0L
                     hasFlipped = false
-                    hasRotated = false
                 }
                 // Tilted Left (Next Page)
                 else if (xAxis > 6.0f) {
                     if (lastTiltState != 1) {
                         lastTiltState = 1
-                        tiltStartTime = currentTime
                         hasFlipped = false
-                        hasRotated = false
                     }
 
-                    // FLIP ACTION: Fire exactly once per tilt (if feature is enabled)
-                    if (isTiltToTurnEnabled && !isLandscape && !hasFlipped && !pagerState.isScrollInProgress) {
+                    // FLIP ACTION: Fire exactly once per tilt (disabled in Landscape)
+                    if (!isLandscape && !hasFlipped && !pagerState.isScrollInProgress) {
                         hasFlipped = true
                         if (pagerState.currentPage < viewModel.pageCount - 1) {
                             scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
                         }
-                    }
-
-                    // ROTATE ACTION: Always active. If held for > 1.5 seconds
-                    if (!hasRotated && tiltStartTime > 0 && (currentTime - tiltStartTime > 1500L)) {
-                        hasRotated = true
-                        activity?.requestedOrientation = if (isLandscape)
-                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                        else
-                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                     }
                 }
                 // Tilted Right (Previous Page)
                 else if (xAxis < -6.0f) {
                     if (lastTiltState != -1) {
                         lastTiltState = -1
-                        tiltStartTime = currentTime
                         hasFlipped = false
-                        hasRotated = false
                     }
 
-                    // FLIP ACTION: Fire exactly once per tilt (if feature is enabled)
-                    if (isTiltToTurnEnabled && !isLandscape && !hasFlipped && !pagerState.isScrollInProgress) {
+                    // FLIP ACTION: Fire exactly once per tilt (disabled in Landscape)
+                    if (!isLandscape && !hasFlipped && !pagerState.isScrollInProgress) {
                         hasFlipped = true
                         if (pagerState.currentPage > 0) {
                             scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
                         }
-                    }
-
-                    // ROTATE ACTION: Always active. If held for > 1.5 seconds
-                    if (!hasRotated && tiltStartTime > 0 && (currentTime - tiltStartTime > 1500L)) {
-                        hasRotated = true
-                        activity?.requestedOrientation = if (isLandscape)
-                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                        else
-                            android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
                     }
                 }
             }
@@ -362,10 +340,12 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
 
     var currentPageStyle by remember { mutableStateOf(PageStyle.TEXTURE_2) }
     var isRainPlaying by remember { mutableStateOf(false) }
+    var rainVolume by remember { mutableFloatStateOf(0.5f) }
 
     // Dialog States
     var showTextureDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+
     var customBgUri by remember { mutableStateOf<Uri?>(null) }
     var customBgBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
@@ -458,12 +438,12 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
     val pageFlipPlayer = remember { try { MediaPlayer.create(context, R.raw.page_flip) } catch (e: Exception) { null } }
     val rainPlayer = remember { try { MediaPlayer.create(context, R.raw.rain)?.apply { isLooping = true } } catch (e: Exception) { null } }
 
-    LaunchedEffect(isRainPlaying) {
+    LaunchedEffect(isRainPlaying, rainVolume) {
         if (rainPlayer == null && isRainPlaying) {
             Toast.makeText(context, "Cannot play: res/raw/rain.mp3 is corrupt", Toast.LENGTH_LONG).show()
         } else {
             try {
-                rainPlayer?.setVolume(0.5f, 0.5f)
+                rainPlayer?.setVolume(rainVolume, rainVolume)
                 if (isRainPlaying) {
                     if (rainPlayer?.isPlaying == false) rainPlayer.start()
                 } else {
@@ -561,19 +541,13 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                         val baseWidth: Float
                         val baseHeight: Float
 
-                        if (isLandscape) {
-                            // Fit-to-Width for Landscape: PDF spans entire screen width
+                        // Standard Fit-Inside for both Portrait and Landscape A4 (Shows entire page)
+                        if (screenRatio > imgRatio) {
+                            baseHeight = screenHeight
+                            baseWidth = screenHeight * imgRatio
+                        } else {
                             baseWidth = screenWidth
                             baseHeight = screenWidth / imgRatio
-                        } else {
-                            // Fit-Inside for Portrait
-                            if (screenRatio > imgRatio) {
-                                baseHeight = screenHeight
-                                baseWidth = screenHeight * imgRatio
-                            } else {
-                                baseWidth = screenWidth
-                                baseHeight = screenWidth / imgRatio
-                            }
                         }
 
                         val unscaleOffset = { screenOffset: Offset ->
@@ -693,7 +667,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                 .pointerInput(currentTool) {
                                     if (currentTool == Tool.NONE) {
                                         awaitEachGesture {
-                                            val down = awaitFirstDown()
+                                            awaitFirstDown()
                                             var isTap = true
                                             do {
                                                 val event = awaitPointerEvent()
@@ -712,7 +686,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                                     val mY = maxOf(0f, (cH - screenHeight) / 2f)
                                                     offsetX = (offsetX + pan.x).coerceIn(-mX, mX)
                                                     offsetY = (offsetY + pan.y).coerceIn(-mY, mY)
-                                                } else if (scale > 1.01f || (isLandscape && baseHeight > screenHeight)) {
+                                                } else if (scale > 1.01f) {
                                                     val cW = baseWidth * scale
                                                     val cH = baseHeight * scale
                                                     val mX = maxOf(0f, (cW - screenWidth) / 2f)
@@ -1114,7 +1088,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                         text = { Text("Read Aloud", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium) },
                                         leadingIcon = {
                                             Icon(
-                                                imageVector = if (isReadingLoading) Icons.Default.HourglassEmpty else if (isSpeaking) Icons.Default.Stop else Icons.Default.VolumeUp,
+                                                imageVector = if (isReadingLoading) Icons.Default.HourglassEmpty else if (isSpeaking) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
                                                 contentDescription = "Read Aloud",
                                                 tint = ThemeGold
                                             )
@@ -1210,7 +1184,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
 
         // --- 3. THE HORIZONTAL DRAGGABLE TOOLBOX (WITH COLOR PICKER) ---
         AnimatedVisibility(
-            visible = isToolbarVisible && showMainUi,
+            visible = isToolbarVisible,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = if (isTablet) 90.dp else 72.dp),
@@ -1261,6 +1235,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                             .clip(RoundedCornerShape(50))
                             .background(ThemeCardBg)
                             .border(1.dp, ThemeGold, RoundedCornerShape(50))
+                            .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { }
                             .pointerInput(Unit) {
                                 detectDragGestures { change, dragAmount ->
                                     change.consume()
@@ -1324,7 +1299,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
 
         // --- FLOATING EDIT RE-OPEN BUTTON ---
         AnimatedVisibility(
-            visible = !isToolbarVisible && showMainUi,
+            visible = !isToolbarVisible,
             modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = if (isTablet) 90.dp else 72.dp),
             enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
             exit = fadeOut() + slideOutVertically(targetOffsetY = { it })
@@ -1332,6 +1307,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
             FloatingActionButton(
                 onClick = {
                     isToolbarVisible = true
+                    areUiBarsVisible = true
                     currentTool = Tool.PEN // Re-open with pen selected
                 },
                 containerColor = ThemeCardBg,
@@ -1640,7 +1616,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             LinearProgressIndicator(
-                                progress = searchProgress,
+                                progress = { searchProgress },
                                 color = ThemeGold,
                                 trackColor = ThemeCardBg,
                                 modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
@@ -1762,7 +1738,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                             }
                         }
 
-                        val presets = PageStyle.values().filter { it != PageStyle.CUSTOM && it != PageStyle.NIGHT }
+                        val presets = PageStyle.entries.filter { it != PageStyle.CUSTOM && it != PageStyle.NIGHT }
                         presets.chunked(2).forEach { rowStyles ->
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 rowStyles.forEach { style ->
@@ -1851,7 +1827,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                     Text("Invite friends to the app", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                                 }
 
-                                Divider(color = ThemeCardBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
+                                HorizontalDivider(color = ThemeCardBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
 
                                 // 2. More Apps
                                 Row(
@@ -1870,7 +1846,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                     Text("More Apps", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                                 }
 
-                                Divider(color = ThemeCardBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
+                                HorizontalDivider(color = ThemeCardBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
 
                                 // 3. Send feedback
                                 Row(
@@ -1880,7 +1856,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                             val emailIntent = Intent(Intent.ACTION_SENDTO).apply {
                                                 data = Uri.parse("mailto:sjv.apps@gmail.com?subject=App%20Feedback")
                                             }
-                                            try { context.startActivity(emailIntent) } catch (e: Exception) {}
+                                            try { context.startActivity(emailIntent) } catch (_: Exception) {}
                                         }
                                         .padding(16.dp),
                                     verticalAlignment = Alignment.CenterVertically,
@@ -1890,7 +1866,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                     Text("Send feedback", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                                 }
 
-                                Divider(color = ThemeCardBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
+                                HorizontalDivider(color = ThemeCardBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
 
                                 // 4. Version
                                 Row(
@@ -1931,7 +1907,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                     Text("LinkedIn", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                                 }
 
-                                Divider(color = ThemeCardBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
+                                HorizontalDivider(color = ThemeCardBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
 
                                 // 2. GitHub
                                 Row(
@@ -1948,7 +1924,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                     Text("GitHub", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                                 }
 
-                                Divider(color = ThemeCardBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
+                                HorizontalDivider(color = ThemeCardBg, thickness = 1.dp, modifier = Modifier.padding(horizontal = 16.dp))
 
                                 // 3. Instagram
                                 Row(
