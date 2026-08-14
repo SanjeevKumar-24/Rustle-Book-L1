@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Book Reader Pro | Premium Reading Experience</title>
+    
+    <!-- Elegant Fonts for a Bookish + Modern Vibe -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,500;0,700;1,500&display=swap" rel="stylesheet">
+
+    <style>
+        /* --- PREMIUM RUSTLE THEME --- */
+        :root {
+            --bg-deep: #0a0a0a;
+            --bg-surface: #151515;
+            --bg-surface-glass: rgba(30, 30, 30, 0.6);
+            --gold-primary: #D4AF37;
+            --gold-light: #F3E5AB;
+            --gold-glow: rgba(212, 175, 55, 0.15);
+            --text-main: #FFFFFF;
+            --text-muted: #A0AAB2;
+            --border-subtle: rgba(255, 255, 255, 0.05);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: var(--bg-deep);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            line-height: 1.7;
+            overflow-x: hidden;
+            background-image: 
+                radial-gradient(circle at 50% 0%, var(--gold-glow) 0%, transparent 50%);
+        }
+
+        h1, h2, h3 {
+            font-family: 'Playfair Display', serif;
+            font-weight: 500;
+        }
+
+        /* --- ENTRY ANIMATIONS --- */
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .animate-up {
+            opacity: 0;
+            animation: fadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+
+        .delay-1 { animation-delay: 0.1s; }
+        .delay-2 { animation-delay: 0.2s; }
+        .delay-3 { animation-delay: 0.3s; }
+
+        /* --- HERO SECTION --- */
+        .hero {
+            position: relative;
+            text-align: center;
+            padding: 120px 20px 80px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 70vh;
+        }
+
+        .hero-badge {
+            background: rgba(212, 175, 55, 0.1);
+            color: var(--gold-light);
+            padding: 6px 16px;
+            border-radius: 50px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+            margin-bottom: 30px;
+            border: 1px solid rgba(212, 175, 55, 0.2);
+            backdrop-filter: blur(10px);
+        }
+
+        .hero h1 {
+            font-size: clamp(3rem, 5vw, 4.5rem);
+            color: #FFFFFF;
+            margin-bottom: 20px;
+            line-height: 1.1;
+        }
+
+        .hero h1 span {
+            background: linear-gradient(135deg, var(--gold-light) 0%, var(--gold-primary) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .hero p {
+            font-size: 1.15rem;
+            color: var(--text-muted);
+            max-width: 650px;
+            margin: 0 auto 40px auto;
+            font-weight: 300;
+        }
+
+        /* --- BUTTONS --- */
+        .btn-container {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 12px;
+            padding: 16px 32px;
+            font-size: 1rem;
+            font-weight: 500;
+            text-decoration: none;
+            border-radius: 12px;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: var(--gold-primary);
+            color: #000;
+            box-shadow: 0 8px 24px rgba(212, 175, 55, 0.25);
+        }
+
+        .btn-primary:hover {
+            background: var(--gold-light);
+            transform: translateY(-3px);
+            box-shadow: 0 12px 32px rgba(212, 175, 55, 0.35);
+        }
+
+        .btn-secondary {
+            background: var(--bg-surface-glass);
+            color: #FFF;
+            border: 1px solid var(--border-subtle);
+            backdrop-filter: blur(10px);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: var(--gold-primary);
+            transform: translateY(-3px);
+        }
+
+        /* --- FEATURES GRID --- */
+        .features {
+            max-width: 1100px;
+            margin: 0 auto 100px;
+            padding: 0 20px;
+        }
+
+        .features-header {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+
+        .features-header h2 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .features-header p {
+            color: var(--text-muted);
+            font-weight: 300;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 24px;
+        }
+
+        .feature-card {
+            background: var(--bg-surface-glass);
+            border: 1px solid var(--border-subtle);
+            border-radius: 20px;
+            padding: 32px;
+            backdrop-filter: blur(20px);
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .feature-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: radial-gradient(circle at top right, rgba(212, 175, 55, 0.05), transparent 70%);
+            opacity: 0;
+            transition: opacity 0.4s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-8px);
+            border-color: rgba(212, 175, 55, 0.3);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        }
+
+        .feature-card:hover::before {
+            opacity: 1;
+        }
+
+        .feature-icon {
+            font-size: 2.2rem;
+            margin-bottom: 20px;
+            display: inline-block;
+            background: rgba(212, 175, 55, 0.1);
+            padding: 16px;
+            border-radius: 16px;
+            border: 1px solid rgba(212, 175, 55, 0.15);
+        }
+
+        .feature-card h3 {
+            font-size: 1.4rem;
+            margin-bottom: 12px;
+        }
+
+        .feature-card p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            font-weight: 300;
+        }
+
+        /* --- FOOTER --- */
+        footer {
+            border-top: 1px solid var(--border-subtle);
+            padding: 40px 20px;
+            text-align: center;
+            background: var(--bg-surface);
+        }
+
+        footer p {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+        }
+
+        .social-links {
+            margin-top: 20px;
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+        }
+
+        .social-links a {
+            color: var(--text-main);
+            text-decoration: none;
+            font-size: 0.95rem;
+            transition: color 0.3s ease;
+            opacity: 0.7;
+        }
+
+        .social-links a:hover {
+            color: var(--gold-primary);
+            opacity: 1;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- HERO SECTION -->
+    <header class="hero">
+        <div class="hero-badge animate-up">Native Android Experience</div>
+        <h1 class="animate-up delay-1">Read Without <br><span>Boundaries.</span></h1>
+        <p class="animate-up delay-2">A next-generation digital reading experience. Highlight, listen, scan, and immerse yourself in beautiful page textures.</p>
+        
+        <div class="btn-container animate-up delay-3">
+            <!-- REPLACE '#' WITH YOUR ACTUAL APK DOWNLOAD LINK -->
+            <a href="https://github.com/SanjeevKumar-24/BOOKL1/releases/latest" class="btn btn-primary" target="_blank">
+                📥 Download APK
+            </a>
+            <!-- REPLACE WITH YOUR GITHUB REPO LINK -->
+            <a href="https://github.com/SanjeevKumar-24/BOOKL1" class="btn btn-secondary" target="_blank">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                View on GitHub
+            </a>
+        </div>
+    </header>
+
+    <!-- FEATURES SECTION -->
+    <section class="features">
+        <div class="features-header animate-up delay-1">
+            <h2>Engineered for Readers</h2>
+            <p>Powerful tools hidden behind a minimalist, distraction-free interface.</p>
+        </div>
+
+        <div class="feature-grid">
+            
+            <div class="feature-card animate-up delay-1">
+                <div class="feature-icon">🎨</div>
+                <h3>Immersive Reading</h3>
+                <p>Customize your experience with beautiful page textures like Parchment, Old Paper, or a high-contrast Night Mode. Perfect fit-to-width scaling for landscape mode.</p>
+            </div>
+
+            <div class="feature-card animate-up delay-2">
+                <div class="feature-icon">🖊️</div>
+                <h3>Advanced Annotations</h3>
+                <p>A robust canvas engine lets you draw, highlight, and place draggable sticky notes anywhere on the page, complete with full Undo/Redo capability.</p>
+            </div>
+
+            <div class="feature-card animate-up delay-3">
+                <div class="feature-icon">⭕</div>
+                <h3>Smart Machine Learning</h3>
+                <p>Using Google ML Kit, simply draw a circle around any text in the PDF to instantly extract it via OCR for copying or translating.</p>
+            </div>
+
+            <div class="feature-card animate-up delay-1">
+                <div class="feature-icon">📱</div>
+                <h3>Tilt-to-Turn</h3>
+                <p>Put your thumbs away. Navigate through your books simply by tilting your device left or right, powered by precise accelerometer sensor tracking.</p>
+            </div>
+
+            <div class="feature-card animate-up delay-2">
+                <div class="feature-icon">🎧</div>
+                <h3>Text-to-Speech</h3>
+                <p>Rest your eyes and let the app read to you. The built-in TTS engine seamlessly extracts text from the page and reads it aloud.</p>
+            </div>
+
+            <div class="feature-card animate-up delay-3">
+                <div class="feature-icon">🌧️</div>
+                <h3>Focus Mode</h3>
+                <p>Block out distractions with built-in, lifecycle-safe ambient rain sounds. Easily control the volume from the advanced settings menu.</p>
+            </div>
+
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer>
+        <p>Developed with ❤️ by Sanjeev Kumar</p>
+        <div class="social-links">
+            <!-- REPLACE WITH YOUR ACTUAL LINKS -->
+            <a href="https://www.linkedin.com/in/sanjeev-kumar-6b7742379" target="_blank">LinkedIn</a>
+            <a href="https://github.com/SanjeevKumar-24" target="_blank">GitHub</a>
+            <a href="https://www.instagram.com/sanjeeveram?igsh=emtuYmJjcGRiM283" target="_blank">Instagram</a>
+            <a href="mailto:sjv.apps@gmail.com">Contact</a>
+        </div>
+    </footer>
+
+</body>
+</html>
