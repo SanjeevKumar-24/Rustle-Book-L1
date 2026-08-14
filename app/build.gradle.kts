@@ -12,7 +12,7 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = 2
-        versionName = "1.0.1"
+        versionName = "1.0.3"
 
         // Excludes heavy x86/x86_64 emulator OCR binaries from the APK
         ndk {

@@ -108,7 +108,7 @@ import kotlin.math.roundToInt
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
-// --- 1. RUSTLE / RUSTK THEME PALETTE ---
+// --- 1. RUSTLE / THEME PALETTE ---
 val ThemeDarkBg = Color(0xFF121212)
 val ThemeCardBg = Color(0xFF1E1E1E)
 val ThemeAccentBlue = Color(0xFF2C2C2C)
@@ -1911,7 +1911,7 @@ fun BookScreen(viewModel: PdfViewModel, onBackClicked: () -> Unit) {
                                     Text("< >", color = ThemeGoldLight, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                     Column {
                                         Text("Version", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-                                        Text("Book Reader Pro 1.0.0", color = Color.LightGray, fontSize = 13.sp)
+                                        Text("Book Reader Pro 1.0.3", color = Color.LightGray, fontSize = 13.sp)
                                     }
                                 }
                             }
